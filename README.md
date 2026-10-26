@@ -2,6 +2,8 @@
 
 Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard automatisch ein komplettes Dashboard im Bubble-Card-Design baut. Alles lässt sich über die Dashboard-Einstellungen anpassen, ohne YAML.
 
+![Dashboard „Unser Zuhause“: Startbereich mit Begrüßung, Hausmodus, Status-Kacheln und Energiefluss](https://raw.githubusercontent.com/SebastianInTheWild/ha-unser-zuhause/main/images/dashboard.png)
+
 ## Funktionen
 
 - **Header in zwei Reihen**: Personen (auswählbar, optional nur Anwesende) und weitere Badges
