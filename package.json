@@ -1,0 +1,15 @@
+{
+  "name": "ha-unser-zuhause",
+  "private": true,
+  "description": "Lokale Tests für die Dashboard-Strategy (nicht Teil der HACS-Installation)",
+  "type": "module",
+  "scripts": {
+    "check": "node --check dist/unser-zuhause-strategy.js && node --check ../ha-unser-zuhause-cards/dist/unser-zuhause-cards.js",
+    "test": "npm run check && node test/run.mjs",
+    "deploy": "npm test && node scripts/deploy.mjs"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.0.0",
+    "playwright": "^1.64.0"
+  }
+}
