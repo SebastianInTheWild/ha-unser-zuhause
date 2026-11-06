@@ -4,7 +4,7 @@
 // Benötigt (HACS): „Unser Zuhause – Karten“ (uz-*-Karten), Integration „Unser Zuhause“,
 //                  Bubble Card, search-card, trash-card, evcc-card
 
-const UZ_VERSION = "1.0.0";
+const UZ_VERSION = "1.1.0";
 
 // Neutrale Standardwerte (keine installationsspezifischen Entitäten).
 // Alle Einstellungen der Nutzer stehen in der Dashboard-Konfiguration und bleiben bei Updates erhalten.
@@ -101,6 +101,11 @@ const DEFAULTS = {
   tablet_users: [],
   tablet_title: "Tablet",
   tablet_cameras: [], // leer = die ersten 4 Kameras
+  // Echo-Show-Ansicht (Echo Show 8, 1280 × 800): für diese Benutzer die Startseite
+  echo_users: [],
+  echo_title: "Echo Show",
+  echo_camera: "", // Kamera-Standbild (leer = keins)
+  echo_layout: [], // 3 Spalten mit Kacheln, z. B. [["clock", "greeting"], ["energy_now"], ["rooms"]]; leer = Standard
   show_system: true, // Unterseite „System“ mit Serverzustand
   system_tile: true, // Kachel in „Unser Zuhause“, öffnet die System-Seite
   system_title: "System",
@@ -546,7 +551,11 @@ function energyModuleCards(cfg, prefs) {
   const diagrams = hasSources
     ? choice
         .filter((k) => k === "now" || k === "day")
-        .map((k) => ({ ...card, type: k === "now" ? "custom:uz-energy-now-card" : "custom:uz-energy-day-card" }))
+        .map((k) => ({
+          ...card,
+          type: k === "now" ? "custom:uz-energy-now-card" : "custom:uz-energy-day-card",
+          path: cfg.show_energy_page ? ENERGY_PATH : "/energy",
+        }))
     : [];
   if (!diagrams.length && !cfg.energy_entity) return [];
   return [
@@ -1205,6 +1214,163 @@ function tabletView(cfg, cameras, prefs, isTabletUser) {
   };
 }
 
+// ---------- Echo-Show-Ansicht ----------
+// Für Amazon Echo Show 8 (1280 × 800 quer, Silk-Browser): drei Spalten auf einen Blick ohne Scrollen,
+// große Tippflächen, keine Kopfzeile, keine Suche, keine Live-Streams. Für die gewählten Benutzer
+// die erste Seite, für alle anderen eine Unterseite (Adresse …/echo-show).
+
+const ECHO_PATH = "echo-show";
+
+// Kacheln, die sich auf der Echo-Show-Seite anordnen lassen (gemeinsam für Strategy und Editor)
+function echoCatalog(cfg) {
+  return [
+    { key: "clock", name: "Uhr", icon: "mdi:clock-outline" },
+    { key: "greeting", name: "Begrüßung", icon: "mdi:hand-wave-outline" },
+    { key: "house_mode", name: "Hausmodus", icon: "mdi:home-account" },
+    { key: "scenes", name: "Szenen", icon: "mdi:palette-outline" },
+    { key: "status", name: "Lichter, Fenster, Rollos", icon: "mdi:lightbulb-group-outline" },
+    { key: "energy_now", name: "Energie aktuell", icon: "mdi:lightning-bolt" },
+    { key: "energy_day", name: "Energie heute", icon: "mdi:solar-power-variant" },
+    { key: "running", name: "Läuft gerade", icon: "mdi:play-circle-outline" },
+    { key: "alerts", name: "Was ist los?", icon: "mdi:bell-alert-outline" },
+    { key: "rooms", name: "Räume", icon: "mdi:floor-plan" },
+    { key: "camera", name: "Kamera", icon: "mdi:cctv" },
+    { key: "weather", name: "Wetter", icon: "mdi:weather-partly-cloudy" },
+    { key: "persons", name: "Personen", icon: "mdi:account-group" },
+    { key: "favorites", name: "Favoriten", icon: "mdi:star" },
+    { key: "trash", name: cfg.trash_title || "Müll", icon: cfg.trash_icon || "mdi:trash-can-outline" },
+    { key: "evcc", name: cfg.evcc_title || "EVCC", icon: cfg.evcc_icon || "mdi:ev-station" },
+    ...(Array.isArray(cfg.custom_modules) ? cfg.custom_modules : [])
+      .filter((m) => m?.key)
+      .map((m) => ({ key: `custom:${m.key}`, name: m.title || m.key, icon: m.icon || "mdi:puzzle" })),
+  ];
+}
+
+const ECHO_DEFAULT_LAYOUT = [
+  ["clock", "greeting", "house_mode", "scenes", "status"],
+  ["energy_now", "running", "alerts"],
+  ["rooms", "camera"],
+];
+
+// Gespeicherte Anordnung bereinigen: immer 3 Spalten, unbekannte Kacheln raus, jede Kachel nur einmal.
+// Was in keiner Spalte steht, ist ausgeblendet (neue Kacheln erscheinen also nicht ungefragt).
+function normalizeEchoLayout(cfg, keys) {
+  const saved = Array.isArray(cfg.echo_layout) && cfg.echo_layout.some((c) => Array.isArray(c) && c.length);
+  const src = saved ? cfg.echo_layout : ECHO_DEFAULT_LAYOUT;
+  const seen = new Set();
+  const cols = [0, 1, 2].map((i) =>
+    (Array.isArray(src[i]) ? src[i] : []).filter((k) => keys.includes(k) && !seen.has(k) && seen.add(k)));
+  return { cols, hidden: keys.filter((k) => !seen.has(k)) };
+}
+
+function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath) {
+  const s = energySources(prefs);
+  const hasEnergy = Boolean(s.gridFrom || s.solar || s.batteryOut);
+  const full = { grid_options: { columns: "full" } };
+  const status = (entity, name, icon, hash) => ({
+    type: "tile", entity, name, icon, vertical: true, tap_action: navigate(hash), icon_tap_action: navigate(hash),
+    grid_options: { columns: 4, rows: 2 },
+  });
+  // Raum-Buttons zu zweit nebeneinander, ohne Messwerte (sonst werden die Namen abgeschnitten)
+  const room = (a) => ({ ...roomButton(a, classified[a.area_id]), sub_button: [], grid_options: { columns: 6 } });
+  const energy = (type) => (hasEnergy ? [{ ...energyCardConfig(cfg), type, path: energyPath }] : []);
+  const custom = Object.fromEntries(
+    (Array.isArray(cfg.custom_modules) ? cfg.custom_modules : [])
+      .filter((m) => m?.key && Array.isArray(m.cards))
+      .map((m) => [`custom:${m.key}`, () => m.cards]),
+  );
+  // Karten je Kachel (leere Liste = ohne Einstellung oder Daten nichts anzeigen)
+  const tiles = {
+    clock: () => [{ type: "clock", clock_size: "large", show_seconds: false, grid_options: { columns: "full", rows: 2 } }],
+    greeting: () => [{
+      type: "custom:uz-greeting-card",
+      ...(cfg.weather_entity ? { weather: cfg.weather_entity } : {}),
+      ...(cfg.lights_entity ? { lights: cfg.lights_entity } : {}),
+      ...(cfg.windows_entity ? { windows: cfg.windows_entity } : {}),
+      ...(cfg._windowsCount ? { windows_count: cfg._windowsCount } : {}),
+      ...(cfg.trash_calendar ? { trash_calendar: cfg.trash_calendar } : {}),
+      weekly_review: "off",
+      ...full,
+    }],
+    house_mode: () => (cfg.house_mode_entity
+      ? [{
+          type: "tile",
+          entity: cfg.house_mode_entity,
+          ...(cfg.house_mode_from_integration ? { name: "Hausmodus" } : {}),
+          hide_state: true,
+          vertical: false,
+          features: [{ type: "select-options" }],
+          features_position: "inline",
+          ...full,
+        }]
+      : []),
+    scenes: () => ((cfg.scenes || []).length || (cfg.scene_all_off && cfg.lights_entity)
+      ? [{ type: "custom:uz-scene-bar", items: cfg.scenes || [], all_off: Boolean(cfg.scene_all_off && cfg.lights_entity), ...full }]
+      : []),
+    status: () => [
+      cfg.lights_entity && status(cfg.lights_entity, "Lichter", "mdi:lightbulb-on-outline", "#uz-lichter"),
+      cfg.windows_entity && status(cfg.windows_entity, "Fenster", undefined, "#uz-fenster"),
+      cfg.covers_entity && status(cfg.covers_entity, "Rollos", "mdi:window-shutter-open", "#uz-rollos"),
+    ].filter(Boolean),
+    energy_now: () => energy("custom:uz-energy-now-card"),
+    energy_day: () => energy("custom:uz-energy-day-card"),
+    running: () => ((cfg.running_devices || []).length || (cfg._battery && cfg._batteryPower)
+      ? [{
+          type: "custom:uz-running-card",
+          devices: cfg.running_devices || [],
+          ...(cfg._battery && cfg._batteryPower ? { battery: cfg._battery, battery_power: cfg._batteryPower } : {}),
+          ...full,
+        }]
+      : []),
+    alerts: () => [{
+      type: "custom:uz-alerts-card",
+      ...(cfg.windows_entity ? { windows: cfg.windows_entity } : {}),
+      ...(cfg.house_mode_entity ? { house_mode: cfg.house_mode_entity } : {}),
+      ...(cfg.camera_motion && cfg._cameras?.length ? { cameras: cfg._cameras } : {}),
+      battery_threshold: Number(cfg.alert_battery ?? 15),
+      ...(cfg._batteryPage ? { battery_path: BATTERY_PATH } : {}),
+      ...full,
+    }],
+    rooms: () => areas.map(room),
+    // Kamera als Standbild; bei Bewegung springt die Vorschau auf die aktive Kamera
+    camera: () => (cfg.echo_camera
+      ? [{
+          type: "custom:uz-camera-preview",
+          camera: cfg.echo_camera,
+          ...(cfg.camera_motion && cfg._cameras?.length ? { cameras: cfg._cameras } : {}),
+          live: false,
+          path: CAMERA_PATH,
+          ...full,
+        }]
+      : []),
+    weather: () => (cfg.weather_entity
+      ? [{ type: "weather-forecast", entity: cfg.weather_entity, show_current: true, show_forecast: true, forecast_type: "daily", forecast_slots: 5, ...full }]
+      : []),
+    persons: () => (cfg._personTiles?.length ? [{ type: "custom:uz-person-card", entities: cfg._personTiles, ...full }] : []),
+    favorites: () => (cfg.favorites || []).map((e) => inlineTile(e, FAVORITE_FEATURES[e.split(".")[0]] || [])),
+    trash: () => trashCardsConfig(cfg),
+    evcc: () => evccCardsConfig(cfg),
+    ...custom,
+  };
+  const { cols } = normalizeEchoLayout(cfg, echoCatalog(cfg).map((t) => t.key));
+  const sections = cols
+    .map((keys) => keys.flatMap((k) => tiles[k]?.() || []))
+    .filter((cards) => cards.length)
+    .map((cards) => ({ type: "grid", cards }));
+  if (!sections.length) sections.push({ type: "grid", cards: [] });
+  sections[0].cards.push(...popups);
+  return {
+    title: cfg.echo_title,
+    path: ECHO_PATH,
+    icon: "mdi:tablet-dashboard",
+    type: "sections",
+    max_columns: 3,
+    ...(isEchoUser ? {} : { subview: true }),
+    ...viewLook(cfg),
+    sections,
+  };
+}
+
 // ---------- Strategy ----------
 
 class UnserZuhauseStrategy extends HTMLElement {
@@ -1310,12 +1476,19 @@ class UnserZuhauseStrategy extends HTMLElement {
     const tabletUsers = Array.isArray(cfg.tablet_users) ? cfg.tablet_users : [];
     const isTabletUser = Boolean(hass.user?.id && tabletUsers.includes(hass.user.id));
     const tablet = tabletUsers.length ? tabletView(cfg, cameras, prefs, isTabletUser) : undefined;
+    // Echo Show: wie Tablet; ist ein Benutzer in beiden Listen, gewinnt das Tablet
+    const echoUsers = Array.isArray(cfg.echo_users) ? cfg.echo_users : [];
+    const isEchoUser = Boolean(!isTabletUser && hass.user?.id && echoUsers.includes(hass.user.id));
     const s = energySources(prefs);
     const hasEnergy = Boolean(s.gridFrom || s.solar || s.batteryOut);
+    // Antippen der Energiekarten: eigene Energie-Seite, sonst das Energie-Dashboard von HA
+    const energyPath = cfg.show_energy_page && hasEnergy ? ENERGY_PATH : "/energy";
+    const echo = echoUsers.length ? echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath) : undefined;
 
     return {
       views: [
         ...(tablet && isTabletUser ? [tablet] : []),
+        ...(echo && isEchoUser ? [echo] : []),
         {
           title: cfg.title,
           path: "zuhause",
@@ -1343,6 +1516,7 @@ class UnserZuhauseStrategy extends HTMLElement {
         ...(cfg._batteryPage ? [batteryView(cfg)] : []),
         ...(cfg.show_energy_page && hasEnergy ? [energyView(cfg, prefs)] : []),
         ...(tablet && !isTabletUser ? [tablet] : []),
+        ...(echo && !isEchoUser ? [echo] : []),
         ...Object.values(embedded).flatMap((e) => e.views),
       ],
     };
@@ -1909,6 +2083,13 @@ const EDITOR_PAGES = {
     group: "Aufbau",
     info: "Eigene Startseite für ein Wandtablet: große Uhr, Hausmodus, Status und Kameras. Gilt für die gewählten Benutzer.",
   },
+  echo: {
+    title: "Echo Show",
+    icon: "mdi:tablet-dashboard",
+    color: "#06b6d4",
+    group: "Aufbau",
+    info: "Eigene Startseite für einen Echo Show 8 (1280 × 800): alles auf einen Blick ohne Scrollen. Kacheln in 3 Spalten anordnen oder ausblenden. Gilt für die gewählten Benutzer.",
+  },
   header: {
     title: "Kopfzeile",
     icon: "mdi:page-layout-header",
@@ -1956,6 +2137,11 @@ const PAGE_SCHEMAS = {
     { name: "tablet_users", selector: { select: { multiple: true, mode: "list", options: users.map((u) => ({ value: u.id, label: u.name })) } } },
     { name: "tablet_title", selector: { text: {} } },
     { name: "tablet_cameras", selector: { entity: { multiple: true, reorder: true, filter: { domain: "camera" } } } },
+  ],
+  echo: (badges, users = []) => [
+    { name: "echo_users", selector: { select: { multiple: true, mode: "list", options: users.map((u) => ({ value: u.id, label: u.name })) } } },
+    { name: "echo_title", selector: { text: {} } },
+    { name: "echo_camera", selector: { entity: { filter: { domain: "camera" } } } },
   ],
   system: () => [
     { name: "show_system", selector: { boolean: {} } },
@@ -2175,6 +2361,9 @@ const LABELS = {
   tablet_users: "Benutzer mit Tablet-Startseite (z. B. der Benutzer des Wandtablets)",
   tablet_title: "Titel",
   tablet_cameras: "Kameras auf dem Tablet (leer = die ersten Kameras, höchstens 6)",
+  echo_users: "Benutzer mit Echo-Show-Startseite (z. B. ein eigener Benutzer für den Echo Show)",
+  echo_title: "Titel",
+  echo_camera: "Kamera-Standbild (leer = keins; bei Bewegung springt es auf die aktive Kamera)",
   camera_tile: "Kachel „Kameras“ in Unser Zuhause",
   camera_title: "Titel",
   show_system: "System-Seite anzeigen",
@@ -2340,6 +2529,9 @@ const LAYOUT_STYLE = `
     user-select: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .chip.picked { outline: 2px solid var(--primary-color); }
+  .cell.col { flex-direction: column; align-items: stretch; justify-content: flex-start; min-height: 120px; }
+  .cell.col .empty { text-align: center; margin: auto 0; }
+  .echo-layout { margin-bottom: 16px; }
   .chip ha-icon { --mdc-icon-size: 18px; color: var(--primary-color); flex: none; }
   .hint { font-size: 12px; color: var(--secondary-text-color); margin-top: 10px; line-height: 1.4; }
 
@@ -2413,6 +2605,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
   _refresh() {
     this._syncForm();
     this._renderLayout();
+    this._renderEchoLayout();
     this._renderItems();
     this._renderHome();
     this._showPage();
@@ -2424,7 +2617,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     if (page) {
       const badges = Array.isArray(this._config.badges) ? this._config.badges : [];
       // Schema nur bei Änderung neu setzen, sonst klappen offene Bereiche beim Tippen zu
-      if (page === "tablet" && !this._usersLoading) {
+      if ((page === "tablet" || page === "echo") && !this._usersLoading) {
         this._usersLoading = true;
         this._hass.callWS({ type: "config/auth/list" })
           .then((list) => (this._users = list.filter((u) => !u.system_generated && u.is_active !== false)))
@@ -2463,6 +2656,8 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
 
       this._layoutEl = document.createElement("div");
       this._layoutEl.className = "uz-page layout";
+      this._echoLayoutEl = document.createElement("div");
+      this._echoLayoutEl.className = "uz-page layout echo-layout";
 
       // Module & Pop-ups: Hinzufügen + Liste; ein Klick öffnet die Seite des Moduls
       this._modulesEl = document.createElement("div");
@@ -2519,7 +2714,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
         LABELS[s.name] ?? this._hass?.states[s.name]?.attributes?.friendly_name ?? s.name;
       this._form.addEventListener("value-changed", (ev) => this._emit(ev.detail.value));
 
-      this.append(style, this._topEl, this._homeEl, this._layoutEl, this._modulesEl, this._itemPageEl, this._form);
+      this.append(style, this._topEl, this._homeEl, this._layoutEl, this._modulesEl, this._itemPageEl, this._echoLayoutEl, this._form);
     }
     this._form.hass = this._hass;
     this._refresh();
@@ -2530,6 +2725,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
   _go(page) {
     this._page = page;
     this._pick = undefined;
+    this._echoPick = undefined;
     this._refresh();
     this._topEl?.scrollIntoView?.({ block: "nearest" });
   }
@@ -2547,6 +2743,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     }
     this._homeEl.hidden = page !== "home";
     this._layoutEl.hidden = page !== "layout";
+    this._echoLayoutEl.hidden = page !== "echo";
     this._modulesEl.hidden = page !== "modules";
     this._itemPageEl.hidden = !isItem;
     this._form.hidden = !PAGE_SCHEMAS[page];
@@ -2643,6 +2840,13 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     if (page === "tablet") {
       const n = (cfg.tablet_users || []).length;
       return n ? `${n} ${n === 1 ? "Benutzer" : "Benutzer"} · Adresse …/${TABLET_PATH}` : "Aus";
+    }
+    if (page === "echo") {
+      const n = (cfg.echo_users || []).length;
+      if (!n) return "Aus";
+      const { cols } = normalizeEchoLayout(cfg, echoCatalog(cfg).map((t) => t.key));
+      const tiles = cols.flat().length;
+      return `${n} Benutzer · ${tiles} ${tiles === 1 ? "Kachel" : "Kacheln"} · Adresse …/${ECHO_PATH}`;
     }
     if (page === "design") {
       return [cfg.theme || "Standard-Theme", cfg.collapsible ? "Module einklappbar" : ""].filter(Boolean).join(" · ");
@@ -3091,6 +3295,71 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
         const [key, from] = ev.dataTransfer.getData("text/plain").split("|");
         if (!key) return;
         move(key, from, zone.dataset.cell);
+      });
+    });
+  }
+
+  // Echo Show: 3 Spalten mit Kacheln untereinander; Ziehen oder Antippen (Kachel, dann Ziel)
+  _renderEchoLayout() {
+    if (!this._echoLayoutEl || !this._hass) return;
+    const cfg = withDefaults(this._config);
+    const catalog = echoCatalog(cfg);
+    const byKey = Object.fromEntries(catalog.map((t) => [t.key, t]));
+    const { cols, hidden } = normalizeEchoLayout(cfg, catalog.map((t) => t.key));
+    const chip = (k, from) =>
+      `<div class="chip" draggable="true" data-key="${esc(k)}" data-from="${from}"><ha-icon icon="${esc(byKey[k].icon)}"></ha-icon>${esc(byKey[k].name)}</div>`;
+    const signature = JSON.stringify([cols, hidden, catalog]);
+    if (signature === this._echoSignature) return;
+    this._echoSignature = signature;
+    this._echoLayoutEl.innerHTML = `
+      <div class="grid" style="grid-template-columns: repeat(3, minmax(0, 1fr))">
+        ${cols.map((col, c) => `<div class="cell col" data-col="${c}">${col.map((k) => chip(k, c)).join("") || '<span class="empty">leer</span>'}</div>`).join("")}
+      </div>
+      <div class="pool" data-col="pool"><span class="pool-title">Ausgeblendet</span>${hidden.map((k) => chip(k, "pool")).join("")}</div>
+      <div class="hint">Kacheln stehen in ihrer Spalte untereinander. Ziehen oder antippen und dann das Ziel antippen:
+        auf eine Kachel = davor einfügen, auf freie Fläche = ans Ende. Kacheln ohne Daten (z. B. Kamera ohne Auswahl) bleiben leer.
+        Der Echo Show 8 zeigt ohne Scrollen etwa 750 Pixel Höhe.</div>`;
+
+    // key in Spalte target (Zahl oder "pool") vor before einfügen (ohne before = ans Ende)
+    const move = (key, target, before) => {
+      const next = cols.map((c) => c.filter((k) => k !== key));
+      if (target !== "pool") {
+        const col = next[Number(target)];
+        const at = before && before !== key ? col.indexOf(before) : -1;
+        col.splice(at >= 0 ? at : col.length, 0, key);
+      }
+      this._echoPick = undefined;
+      this._emit({ echo_layout: next });
+    };
+    const setPick = (pick) => {
+      this._echoPick = pick;
+      this._echoLayoutEl.classList.toggle("picking", !!pick);
+      this._echoLayoutEl.querySelectorAll(".chip").forEach((c) => c.classList.toggle("picked", !!pick && c.dataset.key === pick));
+    };
+    this._echoLayoutEl.onclick = (ev) => {
+      const chipEl = ev.target.closest?.(".chip");
+      const zone = ev.target.closest?.("[data-col]");
+      if (!this._echoPick) {
+        if (chipEl) setPick(chipEl.dataset.key);
+        return;
+      }
+      if (chipEl?.dataset.key === this._echoPick) return setPick(undefined);
+      if (zone) move(this._echoPick, zone.dataset.col, chipEl?.dataset.key);
+    };
+    setPick(this._echoPick && byKey[this._echoPick] ? this._echoPick : undefined);
+    this._echoLayoutEl.querySelectorAll(".chip").forEach((el) => {
+      el.addEventListener("dragstart", (ev) => ev.dataTransfer.setData("text/plain", el.dataset.key));
+    });
+    this._echoLayoutEl.querySelectorAll("[data-col]").forEach((zone) => {
+      zone.addEventListener("dragover", (ev) => {
+        ev.preventDefault();
+        zone.classList.add("over");
+      });
+      zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+      zone.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        const key = ev.dataTransfer.getData("text/plain");
+        if (key && byKey[key]) move(key, zone.dataset.col, ev.target.closest?.(".chip")?.dataset.key);
       });
     });
   }

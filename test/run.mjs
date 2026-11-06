@@ -632,8 +632,13 @@ console.log("\n— Kameras");
   check("Jetzt, Heute, Autarkie, Verlauf",
     ["custom:uz-energy-now-card", "custom:uz-energy-day-card", "energy-date-selection", "energy-self-sufficiency-gauge", "energy-usage-graph"]
       .every((t) => eCards.some((c) => c.type === t)));
-  const eTile = flatCards(eViews[0].sections.flatMap((x) => x.cards)).find((c) => c.path === "energie");
-  check("Kachel „Verlauf & Bilanz“ im Energie-Modul", eTile?.type === "custom:uz-link-tile");
+  const eMain = flatCards(eViews[0].sections.flatMap((x) => x.cards));
+  const eTile = eMain.find((c) => c.type === "custom:uz-link-tile" && c.path === "energie");
+  check("Kachel „Verlauf & Bilanz“ im Energie-Modul", !!eTile);
+  check("Energiekarten öffnen beim Antippen die Energie-Seite",
+    eMain.filter((c) => /uz-energy-(now|day)-card/.test(c.type)).every((c) => c.path === "energie") &&
+    flatCards((await Strategy.generate({ ...userConfig, show_energy_page: false }, hass)).views[0].sections.flatMap((x) => x.cards))
+      .filter((c) => /uz-energy-(now|day)-card/.test(c.type)).every((c) => c.path === "/energy"));
   const coachSec = eView?.sections[0];
   check("Energie-Coach oben, über die ganze Breite, nur mit Bericht sichtbar",
     coachSec?.column_span === 3 && coachSec.visibility?.some((v) => v.state_not === "unknown") &&
@@ -677,6 +682,38 @@ console.log("\n— Kameras");
   const asOther = (await Strategy.generate(tabCfg, { ...camHass, user: { id: "u-seb" } })).views;
   check("Andere Benutzer: Startseite bleibt, Tablet als Unterseite", asOther[0].path === "zuhause" && asOther.find((v) => v.path === "tablet")?.subview === true);
   check("Ohne Tablet-Benutzer keine Tablet-Seite", !(await Strategy.generate(userConfig, camHass)).views.some((v) => v.path === "tablet"));
+
+  // ---------- 2f2. Echo Show ----------
+  console.log("\n— Echo Show");
+  const echoCfg = { ...userConfig, echo_users: ["u-echo"], echo_camera: "camera.garten" };
+  const asEcho = (await Strategy.generate(echoCfg, { ...camHass, user: { id: "u-echo" } })).views;
+  check("Echo-Benutzer: Echo Show ist die erste Seite", asEcho[0]?.path === "echo-show" && !asEcho[0].subview && asEcho[1]?.path === "zuhause");
+  const echoCards = flatCards(asEcho[0].sections.flatMap((x) => x.cards));
+  check("Echo Show: höchstens 3 Spalten, keine Kopfzeile, keine Suche",
+    asEcho[0].max_columns === 3 && asEcho[0].sections.length <= 3 && !asEcho[0].badges?.length && !asEcho[0].header &&
+    !echoCards.some((c) => c.type === "custom:search-card"));
+  check("Echo Show: Raum-Buttons halb breit, Pop-ups dabei",
+    echoCards.some((c) => c.card_type === "button" && c.grid_options?.columns === 6) &&
+    echoCards.some((c) => c.card_type === "pop-up" && c.hash === "#uz-lichter"));
+  check("Echo Show: Kamera als Standbild", echoCards.some((c) => c.type === "custom:uz-camera-preview" && c.live === false && c.camera === "camera.garten"));
+  const echoOther = (await Strategy.generate(echoCfg, { ...camHass, user: { id: "u-seb" } })).views;
+  check("Andere Benutzer: Echo Show als Unterseite", echoOther[0].path === "zuhause" && echoOther.find((v) => v.path === "echo-show")?.subview === true);
+  const both = (await Strategy.generate({ ...echoCfg, tablet_users: ["u-echo"] }, { ...camHass, user: { id: "u-echo" } })).views;
+  check("In beiden Listen: Tablet gewinnt, Echo Show als Unterseite", both[0].path === "tablet" && both.find((v) => v.path === "echo-show")?.subview === true);
+  check("Echo Show: Energie aktuell öffnet die Energie-Seite",
+    echoCards.some((c) => c.type === "custom:uz-energy-now-card" && c.path === "energie"));
+  // Eigene Anordnung: Spalten, Reihenfolge, Ausgeblendetes
+  const echoOwn = (await Strategy.generate(
+    { ...echoCfg, echo_layout: [["energy_day", "clock"], [], ["weather", "unbekannt"]] },
+    { ...camHass, user: { id: "u-echo" } },
+  )).views[0];
+  const colTypes = echoOwn.sections.map((x) => x.cards.filter((c) => c.card_type !== "pop-up").map((c) => c.type));
+  check("Echo Show: eigene Anordnung (leere Spalte fällt weg, Unbekanntes ignoriert)",
+    echoOwn.sections.length === 2 && colTypes[0].join() === "custom:uz-energy-day-card,clock" && colTypes[1].join() === "weather-forecast", JSON.stringify(colTypes));
+  const ownCards = flatCards(echoOwn.sections.flatMap((x) => x.cards));
+  check("Echo Show: nicht platzierte Kacheln ausgeblendet, Pop-ups bleiben",
+    !ownCards.some((c) => c.card_type === "button" || c.type === "custom:uz-greeting-card") && ownCards.some((c) => c.card_type === "pop-up"));
+  check("Ohne Echo-Benutzer keine Echo-Seite", !(await Strategy.generate(userConfig, camHass)).views.some((v) => v.path === "echo-show"));
 }
 
 // ---------- 2g. Startseite: Begrüßung, Hinweise, Läuft gerade, Szenen, Personen, Vorschau ----------
@@ -960,6 +997,28 @@ await settle();
 const nowTexts = valueTexts(now);
 check("Aktuell: PV in kW", nowTexts.includes("3,50 kW"), nowTexts.join(" | "));
 check("Aktuell: Akkustand in der Batterie", nowTexts.includes("55 %"), nowTexts.join(" | "));
+{
+  const go = [];
+  const realPush = win.history.pushState.bind(win.history);
+  win.history.pushState = (x, y, path) => go.push(path);
+  const info = [];
+  now.addEventListener("hass-more-info", (e) => info.push(e.detail.entityId));
+  const { path: _p, ...noPath } = nowConfig;
+  now.setConfig(noPath);
+  await settle();
+  now.shadowRoot.querySelector("ha-card").click();
+  const before = go.length;
+  now.setConfig({ ...nowConfig, path: "energie" });
+  await settle();
+  now.shadowRoot.querySelector("ha-card").click();
+  now.shadowRoot.querySelector(".node[data-entity]")?.click();
+  win.history.pushState = realPush;
+  check("Strategy gibt der Energiekarte die Energie-Seite mit", nowConfig.path === "energie");
+  check("Aktuell: Antippen öffnet die Energie-Seite (nur mit path), Kreise weiter die Details",
+    before === 0 && go.length === 1 && go[0].endsWith("/energie") && info.length === 1, JSON.stringify([before, go, info]));
+  now.setConfig(nowConfig);
+  await settle();
+}
 const batteryIcon = [...now.shadowRoot.querySelectorAll(".node")].find((n) => n.querySelector(".lbl")?.textContent === "Batterie")
   ?.querySelector("ha-icon")?.getAttribute("icon");
 check("Aktuell: Batterie-Icon passt zum Ladestand", batteryIcon === "mdi:battery-60", batteryIcon);
@@ -1028,14 +1087,14 @@ const itemPage = () => visible(".uz-item-page");
 const title = () => visible(".uz-top-title")?.textContent;
 
 check("Startseite: Bereiche in zwei Gruppen",
-  [...editor.querySelectorAll(".uz-home [data-page]")].map((b) => b.dataset.page).join() === "layout,modules,cameras,batteries,system,tablet,header,rooms,design" &&
+  [...editor.querySelectorAll(".uz-home [data-page]")].map((b) => b.dataset.page).join() === "layout,modules,cameras,batteries,system,tablet,echo,header,rooms,design" &&
   [...editor.querySelectorAll(".uz-group-label")].map((l) => l.textContent).join() === "Aufbau,Darstellung");
 check("Startseite: Kurzinfo je Bereich", editor.querySelector('.uz-home [data-page="layout"] .uz-row-sub')?.textContent.includes("Spalten"));
 check("Startseite ohne Zurück-Pfeil, nur sie sichtbar", !visible(".uz-back") && editor.querySelector(".layout").hidden);
 
 go("layout");
 check("Layout öffnet eigene Seite mit Zurück-Pfeil", title() === "Layout" && !!visible(".uz-back") && editor.querySelector(".uz-home").hidden);
-check("Raster mit 8 Zellen", editor.querySelectorAll(".cell").length === 8);
+check("Raster mit 8 Zellen", editor.querySelectorAll(".layout:not(.echo-layout) .cell").length === 8);
 check("Eigenes Modul als Baustein im Layout-Editor", [...editor.querySelectorAll(".chip")].some((c) => c.textContent.includes("Garten")));
 goHome();
 check("Zurück zur Startseite", title() === "Einstellungen" && !editor.querySelector(".uz-home").hidden);
@@ -1203,6 +1262,25 @@ check("Antippen von „Ausgeblendet“ blendet aus", changes.at(-1)?.hidden_modu
 editor.querySelector(`.chip[data-key="${fromKey}"]`).click();
 editor.querySelector('[data-cell="0,0"]').click();
 check("… und wieder einblenden", changes.at(-1)?.grid?.[0]?.[0] === fromKey && !changes.at(-1)?.hidden_modules?.includes(fromKey));
+
+// Echo Show: Kacheln in 3 Spalten anordnen
+go("echo");
+const echoEl = () => editor.querySelector(".echo-layout");
+const echoCol = (c) => [...echoEl().querySelectorAll(`[data-col="${c}"] .chip`)].map((x) => x.dataset.key);
+check("Echo Show: Layout-Editor mit 3 Spalten und Standard-Kacheln",
+  !echoEl().hidden && echoEl().querySelectorAll(".cell.col").length === 3 && echoCol(0)[0] === "clock" && echoCol(1)[0] === "energy_now" &&
+  echoCol("pool").includes("weather"));
+echoEl().querySelector('.chip[data-key="weather"]').click();
+echoEl().querySelector('.chip[data-key="running"]').click();
+check("Echo Show: Antippen fügt vor der Ziel-Kachel ein", changes.at(-1)?.echo_layout?.[1]?.join() === "energy_now,weather,running,alerts", JSON.stringify(changes.at(-1)?.echo_layout));
+echoEl().querySelector('.chip[data-key="clock"]').click();
+echoEl().querySelector('[data-col="2"]').click();
+check("Echo Show: Antippen der Spalte hängt ans Ende", changes.at(-1)?.echo_layout?.[2]?.at(-1) === "clock" && !changes.at(-1).echo_layout[0].includes("clock"));
+const echoDrop = new win.Event("drop", { bubbles: true });
+echoDrop.dataTransfer = { getData: () => "alerts" };
+echoEl().querySelector('[data-col="pool"]').dispatchEvent(echoDrop);
+check("Echo Show: Ziehen nach „Ausgeblendet“ blendet aus", !changes.at(-1)?.echo_layout?.flat().includes("alerts") && echoCol("pool").includes("alerts"));
+check("Haupt-Layout bleibt verborgen", editor.querySelector(".layout:not(.echo-layout)").hidden);
 
 go("modules");
 editor.querySelector(".add-module").click();

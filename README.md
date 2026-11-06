@@ -18,6 +18,11 @@ Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard aut
   - Quellen aus dem Standard-Energie-Dashboard
   - Netz links, PV oben, Batterie unten, Haus mit Anteils-Ring, Wasser oben, Verbraucher rechts
   - Linien animiert nur, wenn gerade Leistung fließt
+- **Echo-Show-Ansicht** für den Echo Show 8 (1280 × 800): alles auf einen Blick ohne Scrollen
+  - Kacheln in 3 Spalten per Drag & Drop oder Antippen anordnen und ausblenden: Uhr, Begrüßung, Hausmodus, Szenen, Status, Energie aktuell/heute, „Läuft gerade“, „Was ist los?“, Räume, Kamera, Wetter, Personen, Favoriten, Müll, EVCC, eigene Module
+  - Kamera als Standbild (springt bei Bewegung auf die aktive Kamera)
+  - Antippen der Energiekarte öffnet die Energie-Seite
+  - Startseite für die gewählten Benutzer (Einstellungen → „Echo Show“), sonst Unterseite `…/echo-show`
 - **Label `no_dboard`** an Entität oder Gerät blendet sie überall aus
 
 ## Voraussetzungen
