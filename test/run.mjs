@@ -236,6 +236,7 @@ const userConfig = {
     power_battery_in: "sensor.battery_charging_power", power_battery_out: "sensor.battery_discharging_power",
     battery_soc: "sensor.battery_level", show_water: true,
   },
+  modules: ["energy", "evcc", "trash"],
   hidden_modules: [],
   grid: [["home", "energy", "trash", "evcc"], ["floor:eg", "floor:og", "floor:speicher", ""]],
   weather_entity: "weather.forecast_home",
@@ -290,6 +291,19 @@ check("Personen automatisch (alle person.*)", plain.badges.length === 3);
 check("Ohne Wetter-Entität kein Wetter", !JSON.stringify(plain).includes("weather-forecast"));
 const plainCards = flatCards(plain.sections.flatMap((s) => s.cards));
 check("Müll und EVCC nicht im Standard-Layout", !plainCards.some((c) => c.type === "custom:trash-card" || c.type === "custom:evcc-card"));
+check("Ohne Einstellungen: „Unser Zuhause“, Energie und Etagen, kein EVCC/Müll",
+  plainCards.some((c) => c.type === "custom:uz-energy-day-card") &&
+  !plainCards.some((c) => /evcc|trash/.test(c.type || "")) &&
+  (await Strategy.generate({ type: "custom:unser-zuhause" }, hass)).views.some((v) => v.path === "energie"));
+{
+  const noEnergy = await Strategy.generate({ type: "custom:unser-zuhause", modules: [] }, hass);
+  check("Energie gelöscht: keine Energiekarten, keine Energie-Seite",
+    !flatCards(noEnergy.views[0].sections.flatMap((x) => x.cards)).some((c) => /uz-energy-(now|day)-card/.test(c.type || "")) &&
+    !noEnergy.views.some((v) => v.path === "energie"));
+  const noOg = await Strategy.generate({ type: "custom:unser-zuhause", removed_modules: ["floor:og"] }, hass);
+  const json = JSON.stringify(noOg.views[0].sections);
+  check("Etage gelöscht: Abschnitt OG fehlt, EG bleibt", json.includes('"key":"floor:eg"') && !json.includes('"key":"floor:og"'));
+}
 check("Status-Kacheln aus der Integration „Unser Zuhause“",
   ["sensor.unser_zuhause_lichter_an", "sensor.unser_zuhause_offene_rollos", "binary_sensor.unser_zuhause_fenster_turen"].every((e) => plainCards.some((c) => c.entity === e)));
 const homeCards = flatCards(plain.sections[0].cards);
@@ -300,7 +314,9 @@ check("Hausmodus direkt unter der Uhr, gleich breit",
 check("Hausmodus wie im Simon42-Dashboard: Auswahl in der Kachel, kurzer Name",
   modeCard?.features?.[0]?.type === "select-options" && modeCard.features_position === "inline" && modeCard.hide_state === true && modeCard.name === "Hausmodus");
 check("Eigene Sensoren haben Vorrang vor der Integration", !JSON.stringify(view).includes("unser_zuhause_lichter_an"));
-check("Energie automatisch aus Energie-Dashboard", flatCards(plain.sections.flatMap((s) => s.cards)).some((c) => c.type === "custom:uz-energy-day-card"));
+check("Energie-Modul hinzugefügt: Quellen automatisch aus Energie-Dashboard",
+  flatCards((await Strategy.generate({ type: "custom:unser-zuhause", modules: ["energy"] }, hass)).views[0].sections.flatMap((s) => s.cards))
+    .some((c) => c.type === "custom:uz-energy-day-card"));
 
 // ---------- 2b. System-Seite ----------
 console.log("\n— System");
@@ -1148,10 +1164,64 @@ const cardRows = () => [...(itemPage()?.querySelectorAll(".uz-card-row") || [])]
 const addCardButton = () => itemPage()?.querySelector(".uz-add-card");
 
 go("modules");
-check("Liste „Module & Pop-ups“: Unser Zuhause, Energie, EVCC, Müll, eigene Module",
-  items().map((i) => i.dataset.id).join(",") === "home:home,energy:energy,evcc:evcc,trash:trash,module:garten",
+check("Liste „Module & Pop-ups“: Unser Zuhause, Energie, EVCC, Müll, Etagen, eigene Module",
+  items().map((i) => i.dataset.id).join(",").replace(/(,floor:[^,]+)+/, ",<etagen>") === "home:home,energy:energy,evcc:evcc,trash:trash,<etagen>,module:garten",
   items().map((i) => i.dataset.id).join(","));
 check("Sichtbare Module ohne Markierung „ausgeblendet“", !editor.querySelector('.items [data-id="evcc:evcc"] .uz-pill'));
+check("Alle Zusatzmodule aktiv: keine Hinzufügen-Knöpfe dafür", !editor.querySelector(".add-optional [data-add]"));
+
+{
+  // Zusatzmodule hinzufügen und löschen (eigener Editor, frische Konfiguration)
+  const ed = document.createElement("unser-zuhause-strategy-editor");
+  const ch = [];
+  ed.addEventListener("config-changed", (e) => { ch.push(e.detail.config); ed.setConfig(e.detail.config); });
+  ed.hass = hass;
+  ed.setConfig({ type: "custom:unser-zuhause" });
+  document.body.append(ed);
+  await tick();
+  ed.querySelector('.uz-home [data-page="modules"]').click();
+  const ids = () => [...ed.querySelectorAll(".items .item")].map((i) => i.dataset.id).join(",");
+  const adds = () => [...ed.querySelectorAll(".add-optional [data-add]")].map((b) => b.dataset.add).join(",");
+  check("Frisch: Unser Zuhause, Energie und Etagen in der Modulliste", /^home:home,energy:energy,floor:eg,floor:og/.test(ids()), ids());
+  check("Frisch: Knöpfe + EVCC, + Müll", adds() === "evcc,trash", adds());
+  ed.querySelector('.add-optional [data-add="evcc"]').click();
+  await tick();
+  check("EVCC hinzufügen: modules + Seite des Moduls offen",
+    ch.at(-1)?.modules?.join() === "energy,evcc" && [...ed.querySelectorAll(".uz-top-title")].some((t) => !t.closest("[hidden]") && t.textContent === "EVCC"));
+  const gen = await Strategy.generate(ch.at(-1), hass);
+  check("EVCC erscheint danach im Dashboard", flatCards(gen.views[0].sections.flatMap((x) => x.cards)).some((c) => c.type === "custom:evcc-card"));
+  const del = () => [...ed.querySelectorAll(".uz-danger .delete")].find((b) => !b.closest("[hidden]"));
+  check("EVCC-Seite hat Löschen-Knopf", Boolean(del()));
+  del().click();
+  check("Löschen fragt erst nach", ch.at(-1)?.modules?.join() === "energy,evcc" && del().textContent.includes("Wirklich löschen?"));
+  del().click();
+  await tick();
+  check("EVCC gelöscht: nicht mehr in modules, Knopf + EVCC wieder da",
+    ch.at(-1)?.modules?.join() === "energy" && !ids().includes("evcc:evcc") && adds() === "evcc,trash");
+
+  // Etage löschen und zurückholen
+  ed.querySelector('.items [data-open="floor:og"]').click();
+  await tick();
+  check("Etage OG hat eigene Seite mit Löschen", Boolean(del()));
+  del().click();
+  del().click();
+  await tick();
+  check("Etage OG gelöscht: removed_modules, nicht mehr in der Liste, Knopf + OG",
+    ch.at(-1)?.removed_modules?.join() === "floor:og" && !ids().includes("floor:og") && adds() === "evcc,trash,floor:og");
+  ed.querySelector('.add-optional [data-add="floor:og"]').click();
+  await tick();
+  check("Etage OG wieder hinzugefügt", ch.at(-1)?.removed_modules?.length === 0 && ids().includes("floor:og"));
+  ed.remove();
+
+  // „Löschen“ im HA-Einstellungsdialog wird ausgeblendet
+  const dlg = document.createElement("dialog-dashboard-strategy-editor");
+  dlg.attachShadow({ mode: "open" }).innerHTML = '<ha-button slot="secondaryAction" variant="danger">Löschen</ha-button><div class="c"></div>';
+  document.body.append(dlg);
+  const ed2 = document.createElement("unser-zuhause-strategy-editor");
+  dlg.shadowRoot.querySelector(".c").append(ed2);
+  check("HA-Dialog: Knopf „Löschen“ ausgeblendet", dlg.shadowRoot.querySelector("style[data-uz-no-delete]")?.textContent.includes('variant="danger"'));
+  dlg.remove();
+}
 
 openItem("home:home");
 await settle();

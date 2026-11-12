@@ -122,7 +122,12 @@ const DEFAULTS = {
   system_router_upload: "",
   system_speedtest_download: "",
   system_speedtest_upload: "",
-  hidden_modules: ["evcc", "trash"], // Müll und EVCC erst nach Bedarf ins Layout ziehen
+  // Zusatzmodule (energy, evcc, trash); beim Start nur Energie.
+  // Im Editor unter „Module & Pop-ups“ hinzufügen und wieder löschen.
+  modules: ["energy"],
+  // Gelöschte Etagen-/Raum-Module (z. B. "floor:og", "floor:_rest", "rooms"); per „+ <Name>“ wieder hinzufügen
+  removed_modules: [],
+  hidden_modules: [],
   // Design
   theme: "",
   background_image: "",
@@ -139,6 +144,14 @@ const DEFAULTS = {
 const WINDOW_CLASSES = ["window", "door", "opening", "garage_door"];
 const HIDDEN_COVER_CLASSES = ["garage", "gate"];
 const FIXED_MODULES = ["home", "energy", "evcc", "trash"];
+// Zusatzmodule, die man hinzufügen und löschen kann (Reihenfolge = Anzeige im Editor)
+const OPTIONAL_MODULES = [
+  { key: "energy", title: "Energie", icon: "mdi:lightning-bolt", type: "Energiefluss aktuell und heute" },
+  { key: "evcc", title: "EVCC", icon: "mdi:ev-station", type: "Karten der Wallbox (EVCC)" },
+  { key: "trash", title: "Müll", icon: "mdi:trash-can-outline", type: "Abholtermine aus dem Kalender" },
+];
+const enabledModules = (cfg) =>
+  (Array.isArray(cfg.modules) ? cfg.modules : []).filter((k) => OPTIONAL_MODULES.some((m) => m.key === k));
 
 const popupHash = (areaId) => `#uz-${areaId.replace(/_/g, "-")}`;
 const withDefaults = (config) => ({ ...DEFAULTS, ...config });
@@ -248,9 +261,8 @@ const visibleAreas = (hass, cfg) =>
 function moduleCatalog(hass, cfg) {
   const list = [
     { key: "home", name: cfg.title || "Unser Zuhause", icon: cfg.icon },
-    { key: "energy", name: cfg.energy_title, icon: cfg.energy_icon },
-    { key: "evcc", name: cfg.evcc_title, icon: cfg.evcc_icon },
-    { key: "trash", name: cfg.trash_title, icon: cfg.trash_icon },
+    ...OPTIONAL_MODULES.filter((m) => enabledModules(cfg).includes(m.key))
+      .map((m) => ({ key: m.key, name: cfg[`${m.key}_title`] || m.title, icon: cfg[`${m.key}_icon`] || m.icon })),
   ];
   const areas = visibleAreas(hass, cfg);
   if (cfg.group_by_floors) {
@@ -267,7 +279,14 @@ function moduleCatalog(hass, cfg) {
   (Array.isArray(cfg.custom_modules) ? cfg.custom_modules : [])
     .filter((m) => m?.key)
     .forEach((m) => list.push({ key: `custom:${m.key}`, name: m.title || m.key, icon: m.icon || "mdi:puzzle" }));
-  return list;
+  const removed = Array.isArray(cfg.removed_modules) ? cfg.removed_modules : [];
+  return list.filter((m) => !removed.includes(m.key));
+}
+
+// Etagen-/Raum-Module, die gelöscht werden können (auch die gelöschten, für „+ hinzufügen“)
+function deletableRoomModules(hass, cfg) {
+  return moduleCatalog(hass, { ...cfg, removed_modules: [] })
+    .filter((m) => m.key === "rooms" || m.key.startsWith("floor:"));
 }
 
 // Standard-Raster: feste Module in Zeile 1, Etagen/eigene Module in den Zeilen darunter
@@ -1239,8 +1258,8 @@ function echoCatalog(cfg) {
     { key: "weather", name: "Wetter", icon: "mdi:weather-partly-cloudy" },
     { key: "persons", name: "Personen", icon: "mdi:account-group" },
     { key: "favorites", name: "Favoriten", icon: "mdi:star" },
-    { key: "trash", name: cfg.trash_title || "Müll", icon: cfg.trash_icon || "mdi:trash-can-outline" },
-    { key: "evcc", name: cfg.evcc_title || "EVCC", icon: cfg.evcc_icon || "mdi:ev-station" },
+    ...(enabledModules(cfg).includes("trash") ? [{ key: "trash", name: cfg.trash_title || "Müll", icon: cfg.trash_icon || "mdi:trash-can-outline" }] : []),
+    ...(enabledModules(cfg).includes("evcc") ? [{ key: "evcc", name: cfg.evcc_title || "EVCC", icon: cfg.evcc_icon || "mdi:ev-station" }] : []),
     ...(Array.isArray(cfg.custom_modules) ? cfg.custom_modules : [])
       .filter((m) => m?.key)
       .map((m) => ({ key: `custom:${m.key}`, name: m.title || m.key, icon: m.icon || "mdi:puzzle" })),
@@ -1481,7 +1500,8 @@ class UnserZuhauseStrategy extends HTMLElement {
     const echoUsers = Array.isArray(cfg.echo_users) ? cfg.echo_users : [];
     const isEchoUser = Boolean(!isTabletUser && hass.user?.id && echoUsers.includes(hass.user.id));
     const s = energySources(prefs);
-    const hasEnergy = Boolean(s.gridFrom || s.solar || s.batteryOut);
+    // Energie-Seite nur mit Energie-Modul (dort hängt ihre Kachel)
+    const hasEnergy = enabledModules(cfg).includes("energy") && Boolean(s.gridFrom || s.solar || s.batteryOut);
     // Antippen der Energiekarten: eigene Energie-Seite, sonst das Energie-Dashboard von HA
     const energyPath = cfg.show_energy_page && hasEnergy ? ENERGY_PATH : "/energy";
     const echo = echoUsers.length ? echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath) : undefined;
@@ -2218,6 +2238,8 @@ const titleIcon = (title, icon) => ({
   ],
 });
 const ITEM_SCHEMAS = {
+  floor: () => [],
+  rooms: () => [],
   home: () => [
     titleIcon("title", "icon"),
     {
@@ -2512,6 +2534,7 @@ const LAYOUT_STYLE = `
     border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); font-size: 14px; font-weight: 500;
   }
   .add-module ha-icon { --mdc-icon-size: 18px; }
+  .add-optional { display: contents; }
 
   /* Layout */
   .layout-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -2571,6 +2594,30 @@ const LAYOUT_STYLE = `
 `;
 
 class UnserZuhauseStrategyEditor extends HTMLElement {
+  connectedCallback() {
+    this._hideDialogDelete();
+  }
+
+  // HAs Einstellungsdialog hat unten „Löschen“ (verwirft die ganze Dashboard-Konfiguration).
+  // Das soll nur unter Einstellungen → Dashboards gehen: Knopf im Dialog ausblenden.
+  _hideDialogDelete() {
+    let node = this;
+    for (let i = 0; i < 20 && node; i++) {
+      const root = node.getRootNode?.();
+      const host = root?.host;
+      if (host?.localName === "dialog-dashboard-strategy-editor") {
+        if (!root.querySelector("style[data-uz-no-delete]")) {
+          const st = document.createElement("style");
+          st.dataset.uzNoDelete = "";
+          st.textContent = 'ha-button[variant="danger"][slot="secondaryAction"] { display: none !important; }';
+          root.append(st);
+        }
+        return;
+      }
+      node = host;
+    }
+  }
+
   setConfig(config) {
     this._config = config;
     this._render();
@@ -2697,9 +2744,26 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
           ],
         });
       };
+      // Zusatzmodule (Energie, EVCC, Müll), die noch nicht im Dashboard sind
+      this._addOptionalEl = document.createElement("span");
+      this._addOptionalEl.className = "add-optional";
+      this._addOptionalEl.addEventListener("click", (ev) => {
+        const btn = ev.target.closest?.("[data-add]");
+        if (!btn) return;
+        const key = btn.dataset.add;
+        const cfg = withDefaults(this._config);
+        const hidden_modules = (cfg.hidden_modules || []).filter((k) => k !== key);
+        if (OPTIONAL_MODULES.some((m) => m.key === key)) {
+          this._page = `item:${key}:${key}`;
+          this._emit({ modules: [...enabledModules(cfg).filter((k) => k !== key), key], hidden_modules });
+        } else {
+          // gelöschte Etage / Räume zurückholen
+          this._emit({ removed_modules: (cfg.removed_modules || []).filter((k) => k !== key), hidden_modules });
+        }
+      });
       const buttons = document.createElement("div");
       buttons.className = "add-buttons";
-      buttons.append(add, addPopup);
+      buttons.append(this._addOptionalEl, add, addPopup);
       this._itemsEl = document.createElement("div");
       this._itemsEl.className = "uz-list items";
       this._itemsEl.addEventListener("click", (ev) => this._onItemsClick(ev));
@@ -2902,9 +2966,16 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     const cfg = withDefaults(this._config);
     return [
       { kind: "home", key: "home", icon: cfg.icon, name: cfg.title, type: "Uhr, Hausmodus, Status, Wetter, Favoriten" },
-      { kind: "energy", key: "energy", icon: cfg.energy_icon, name: cfg.energy_title, type: "Energiefluss aktuell und heute" },
-      { kind: "evcc", key: "evcc", icon: cfg.evcc_icon, name: cfg.evcc_title, type: "Karten der Wallbox (EVCC)" },
-      { kind: "trash", key: "trash", icon: cfg.trash_icon, name: cfg.trash_title, type: "Abholtermine aus dem Kalender" },
+      ...OPTIONAL_MODULES.filter((m) => enabledModules(cfg).includes(m.key)).map((m) => ({
+        kind: m.key, key: m.key, icon: cfg[`${m.key}_icon`] || m.icon, name: cfg[`${m.key}_title`] || m.title, type: m.type,
+      })),
+      // Etagen bzw. „Räume“: Inhalt kommt aus den Bereichen, hier nur löschen
+      ...(this._hass ? deletableRoomModules(this._hass, cfg) : [])
+        .filter((m) => !(cfg.removed_modules || []).includes(m.key))
+        .map((m) => ({
+          kind: m.key === "rooms" ? "rooms" : "floor", key: m.key === "rooms" ? "rooms" : m.key.slice(6),
+          icon: m.icon, name: m.name, type: m.key === "rooms" ? "Alle Räume" : "Etage · Räume aus den Bereichen",
+        })),
       ...this._modules().map((m) => ({
         kind: "module", key: m.key, icon: m.icon || "mdi:puzzle", name: m.title || m.key,
         type: `Eigenes Modul · ${(m.cards || []).length} Karten`,
@@ -2921,11 +2992,20 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     const rows = this._itemRows();
     const cfg = withDefaults(this._config);
     const { hidden } = normalizeGrid(cfg, moduleCatalog(this._hass, cfg).map((m) => m.key));
-    const isHidden = (r) => hidden.includes(r.kind === "module" ? `custom:${r.key}` : r.key);
+    const isHidden = (r) => hidden.includes(r.kind === "module" ? `custom:${r.key}` : r.kind === "floor" ? `floor:${r.key}` : r.key);
     // Nur neu aufbauen, wenn sich etwas geändert hat (stabile Elemente, kein verlorener Klick)
-    const signature = JSON.stringify([rows, hidden]);
+    const missing = [
+      ...OPTIONAL_MODULES.filter((m) => !enabledModules(cfg).includes(m.key)),
+      ...(this._hass ? deletableRoomModules(this._hass, cfg) : [])
+        .filter((m) => (cfg.removed_modules || []).includes(m.key))
+        .map((m) => ({ key: m.key, title: m.name })),
+    ];
+    const signature = JSON.stringify([rows, hidden, missing]);
     if (signature === this._itemsSignature) return;
     this._itemsSignature = signature;
+    this._addOptionalEl.innerHTML = missing
+      .map((m) => `<button class="add-module" data-add="${esc(m.key)}"><ha-icon icon="mdi:plus"></ha-icon>${esc(m.title)}</button>`)
+      .join("");
     const row = (r) => `
       <div class="item" data-id="${esc(`${r.kind}:${r.key}`)}">
         <button class="item-head" data-open="${esc(`${r.kind}:${r.key}`)}" style="--uz-c:${EDITOR_PAGES.modules.color}">
@@ -2953,11 +3033,14 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
   // Löschen am Ende der Seite eines eigenen Moduls / Pop-ups
   _syncDelete() {
     const b = this._itemBody;
-    if (!b || (b.kind !== "module" && b.kind !== "popup")) return;
+    const optional = OPTIONAL_MODULES.some((m) => m.key === b?.kind) || b?.kind === "floor" || b?.kind === "rooms";
+    if (!b || (b.kind !== "module" && b.kind !== "popup" && !optional)) return;
     if (!b.deleteBtn) {
       const zone = document.createElement("div");
       zone.className = "uz-danger";
-      zone.innerHTML = `<span class="uz-danger-text">${b.kind === "module" ? "Modul" : "Pop-up"} mit allen Karten entfernen</span>`;
+      zone.innerHTML = `<span class="uz-danger-text">${
+        optional ? "Modul aus dem Dashboard entfernen (Einstellungen bleiben für später erhalten)"
+          : `${b.kind === "module" ? "Modul" : "Pop-up"} mit allen Karten entfernen`}</span>`;
       const btn = document.createElement("button");
       btn.className = "delete";
       btn.dataset.kind = b.kind;
@@ -2995,7 +3078,22 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     }
     this._pendingDelete = undefined;
     this._page = "modules";
-    if (kind === "module") {
+    if (kind === "floor" || kind === "rooms") {
+      const cfg = withDefaults(this._config);
+      const moduleKey = kind === "rooms" ? "rooms" : `floor:${key}`;
+      this._emit({
+        removed_modules: [...(cfg.removed_modules || []).filter((k) => k !== moduleKey), moduleKey],
+        grid: (this._config.grid || []).map((row) => (row || []).map((k) => (k === moduleKey ? "" : k))),
+        hidden_modules: (cfg.hidden_modules || []).filter((k) => k !== moduleKey),
+      });
+    } else if (OPTIONAL_MODULES.some((m) => m.key === kind)) {
+      const cfg = withDefaults(this._config);
+      this._emit({
+        modules: enabledModules(cfg).filter((k) => k !== kind),
+        grid: (this._config.grid || []).map((row) => (row || []).map((k) => (k === kind ? "" : k))),
+        hidden_modules: (cfg.hidden_modules || []).filter((k) => k !== kind),
+      });
+    } else if (kind === "module") {
       const moduleKey = `custom:${key}`;
       this._emit({
         custom_modules: this._modules().filter((m) => m.key !== key),
@@ -3026,6 +3124,12 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     el.append(form);
     body.form = form;
 
+    if (kind === "floor" || kind === "rooms") {
+      const hint = document.createElement("div");
+      hint.className = "body-hint";
+      hint.textContent = "Die Räume kommen automatisch aus den Bereichen in Home Assistant. Einzelne Räume oder Etagen blendest du unter „Räume & Etagen“ aus. Gelöscht erscheint das Modul oben als „+ hinzufügen“.";
+      el.insertBefore(hint, form);
+    }
     if (kind === "home") {
       const hint = document.createElement("div");
       hint.className = "body-hint";

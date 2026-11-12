@@ -10,7 +10,7 @@ Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard aut
 - **Module in einer Layout-Matrix**: Spaltenanzahl frei wählbar, Module per Drag & Drop anordnen oder ausblenden
   - Unser Zuhause (Uhr, Suche, Status-Kacheln, Favoriten)
   - Energie (Energiefluss aktuell und heute)
-  - EVCC und Müll (anfangs ausgeblendet, bei Bedarf ins Layout ziehen)
+  - EVCC und Müll (anfangs nicht dabei, in den Einstellungen per „+ EVCC“ / „+ Müll“ hinzufügen)
   - eine Spalte je Etage mit den Räumen als Buttons und Raum-Popups
   - eigene Module, Karten per GUI wie auf normalen Dashboards
 - **Einklappbare Module**, auf dem Handy anfangs eingeklappt
@@ -84,6 +84,10 @@ In den Einstellungen unter „Module & Pop-ups“ öffnet ein Klick auf einen Ei
 
 Neue Module erscheinen im Layout-Editor und lassen sich in jede Spalte ziehen.
 
+Energie, EVCC, Müll und die Etagen (bzw. „Räume“) lassen sich unten auf ihrer Seite löschen und oben über „+ <Name>“ wieder hinzufügen. Beim Start sind „Unser Zuhause“, Energie und die Etagen dabei. Die Einstellungen eines gelöschten Moduls bleiben erhalten (Optionen `modules` und `removed_modules`).
+
+Das ganze Dashboard löschst du nur unter Einstellungen → Dashboards; der „Löschen“-Knopf im Einstellungsdialog des Dashboards ist ausgeblendet.
+
 ## Einstellungen und Updates
 
 Die Datei enthält keine installationsspezifischen Entitäten. Alles, was du in den Einstellungen festlegst, wird in der Konfiguration deines Dashboards gespeichert, nicht in der Datei. Ein Update über HACS ersetzt nur die Datei, deine Einstellungen bleiben erhalten.
@@ -97,7 +101,7 @@ Ohne Einstellungen erkennt die Strategy automatisch:
 - Status-Kacheln aus der Integration „Unser Zuhause“
 - Leistung von Netz, PV und Batterie, wenn im Energie-Dashboard Leistungssensoren hinterlegt sind
 
-Müll (Kalender) und EVCC richtest du selbst ein und ziehst sie dann ins Layout.
+Müll (Kalender) und EVCC fügst du unter „Module & Pop-ups“ hinzu und richtest sie dort ein.
 
 ## Lizenz
 
