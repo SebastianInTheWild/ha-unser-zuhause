@@ -2,7 +2,7 @@
 // Autor: SebastianInTheWild · MIT-Lizenz
 // Nutzung: strategy: { type: custom:unser-zuhause, ... }  – Optionen siehe DEFAULTS
 // Benötigt (HACS): „Unser Zuhause – Karten“ (uz-*-Karten), Integration „Unser Zuhause“,
-//                  Bubble Card, search-card, trash-card, evcc-card
+//                  Bubble Card, search-card, trash-card
 
 const UZ_VERSION = "1.2.0";
 
@@ -59,17 +59,9 @@ const DEFAULTS = {
   energy_cards: ["now", "day"], // now = aktuelle Werte, day = heute; Reihenfolge = Anzeige
   // Einstellungen der Energiekarten (wie im Editor der Karte uz-energy-now-card / uz-energy-day-card)
   energy_card: {},
-  // EVCC (mkshb/hass-evcc-card): eine Karte je gewählter Ansicht
-  show_evcc: true,
-  evcc_modes: ["loadpoint"],
-  evcc_loadpoint: "",
-  evcc_size: "",
-  evcc_options: {},
   // Module: Titel/Icons ("Unser Zuhause" nutzt title/icon)
   energy_title: "Energie",
   energy_icon: "mdi:lightning-bolt",
-  evcc_title: "EVCC",
-  evcc_icon: "mdi:ev-station",
   trash_title: "Müll",
   trash_icon: "mdi:trash-can-outline",
   // Eigene Module: [{ key, title, icon, cards: [ ...Karten-YAML... ] }]
@@ -78,7 +70,7 @@ const DEFAULTS = {
   // Öffnen über die Adresse (hash), z. B. Badge-Aktion "navigate" mit navigation_path "#uz-garten"
   custom_popups: [],
   // Raster: Zeilen × Spalten mit Modul-Schlüsseln, "" = leere Zelle (Platzhalter)
-  // z. B. [["home", "energy", "evcc"], ["floor:eg", "", "floor:og"]]; leer = automatisch
+  // z. B. [["home", "energy", "trash"], ["floor:eg", "", "floor:og"]]; leer = automatisch
   grid: [],
   show_batteries: true, // Unterseite „Batterien“ (nur wenn Batterie-Geräte vorhanden)
   battery_tile: true, // Kachel „Batterien“ in Unser Zuhause
@@ -122,7 +114,7 @@ const DEFAULTS = {
   system_router_upload: "",
   system_speedtest_download: "",
   system_speedtest_upload: "",
-  // Zusatzmodule (energy, evcc, trash); beim Start nur Energie.
+  // Zusatzmodule (energy, trash); beim Start nur Energie. EVCC & Co. als eigenes Modul.
   // Im Editor unter „Module & Pop-ups“ hinzufügen und wieder löschen.
   modules: ["energy"],
   // Gelöschte Etagen-/Raum-Module (z. B. "floor:og", "floor:_rest", "rooms"); per „+ <Name>“ wieder hinzufügen
@@ -143,11 +135,10 @@ const DEFAULTS = {
 
 const WINDOW_CLASSES = ["window", "door", "opening", "garage_door"];
 const HIDDEN_COVER_CLASSES = ["garage", "gate"];
-const FIXED_MODULES = ["home", "energy", "evcc", "trash"];
+const FIXED_MODULES = ["home", "energy", "trash"];
 // Zusatzmodule, die man hinzufügen und löschen kann (Reihenfolge = Anzeige im Editor)
 const OPTIONAL_MODULES = [
   { key: "energy", title: "Energie", icon: "mdi:lightning-bolt", type: "Energiefluss aktuell und heute" },
-  { key: "evcc", title: "EVCC", icon: "mdi:ev-station", type: "Karten der Wallbox (EVCC)" },
   { key: "trash", title: "Müll", icon: "mdi:trash-can-outline", type: "Abholtermine aus dem Kalender" },
 ];
 const enabledModules = (cfg) =>
@@ -703,28 +694,6 @@ function energyView(cfg, prefs) {
   };
 }
 
-// ---------- Modul: EVCC ----------
-
-// Karten des EVCC-Moduls. Ohne eigene Kartenliste: aus den früheren Einstellungen (eine Karte je Ansicht).
-function evccCardsConfig(cfg) {
-  if (Array.isArray(cfg.evcc_cards)) return cfg.evcc_cards;
-  const modes = cfg.evcc_modes?.length ? cfg.evcc_modes : ["loadpoint"];
-  return modes.map((mode) => ({
-    type: "custom:evcc-card",
-    mode,
-    ...(cfg.evcc_loadpoint ? { loadpoint: cfg.evcc_loadpoint } : {}),
-    ...(cfg.evcc_size ? { size: cfg.evcc_size } : {}),
-    ...(cfg.evcc_options && typeof cfg.evcc_options === "object" ? cfg.evcc_options : {}),
-  }));
-}
-
-function evccModuleCards(cfg) {
-  if (!cfg.show_evcc) return [];
-  const cards = evccCardsConfig(cfg);
-  if (!cards.length) return [];
-  return [{ type: "heading", heading: cfg.evcc_title, heading_style: "title", icon: cfg.evcc_icon }, ...cards];
-}
-
 // ---------- Modul: Müll ----------
 
 // Karten des Müll-Moduls. Ohne eigene Kartenliste: Müll-Karte wie im Dashboard "Übersicht".
@@ -1259,7 +1228,6 @@ function echoCatalog(cfg) {
     { key: "persons", name: "Personen", icon: "mdi:account-group" },
     { key: "favorites", name: "Favoriten", icon: "mdi:star" },
     ...(enabledModules(cfg).includes("trash") ? [{ key: "trash", name: cfg.trash_title || "Müll", icon: cfg.trash_icon || "mdi:trash-can-outline" }] : []),
-    ...(enabledModules(cfg).includes("evcc") ? [{ key: "evcc", name: cfg.evcc_title || "EVCC", icon: cfg.evcc_icon || "mdi:ev-station" }] : []),
     ...(Array.isArray(cfg.custom_modules) ? cfg.custom_modules : [])
       .filter((m) => m?.key)
       .map((m) => ({ key: `custom:${m.key}`, name: m.title || m.key, icon: m.icon || "mdi:puzzle" })),
@@ -1369,7 +1337,6 @@ function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath)
     persons: () => (cfg._personTiles?.length ? [{ type: "custom:uz-person-card", entities: cfg._personTiles, ...full }] : []),
     favorites: () => (cfg.favorites || []).map((e) => inlineTile(e, FAVORITE_FEATURES[e.split(".")[0]] || [])),
     trash: () => trashCardsConfig(cfg),
-    evcc: () => evccCardsConfig(cfg),
     ...custom,
   };
   const { cols } = normalizeEchoLayout(cfg, echoCatalog(cfg).map((t) => t.key));
@@ -1461,7 +1428,6 @@ class UnserZuhauseStrategy extends HTMLElement {
     const modules = {
       home: [...headerCards(cfg), ...favoriteCards(cfg.favorites)],
       energy: collapsibleCards(cfg, "energie", energyModuleCards(cfg, prefs)),
-      evcc: collapsibleCards(cfg, "evcc", evccModuleCards(cfg)),
       trash: collapsibleCards(cfg, "muell", trashModuleCards(cfg)),
     };
     Object.entries(roomModules(hass, cfg, areas, classified)).forEach(([key, cards]) => {
@@ -2359,7 +2325,6 @@ const ITEM_SCHEMAS = {
     sensor("energy_entity"),
     { name: "show_energy_page", selector: { boolean: {} } },
   ],
-  evcc: () => [titleIcon("evcc_title", "evcc_icon"), { name: "show_evcc", selector: { boolean: {} } }],
   trash: () => [titleIcon("trash_title", "trash_icon"), { name: "show_trash", selector: { boolean: {} } }],
   module: () => [titleIcon("title", "icon")],
   popup: () => [
@@ -2424,8 +2389,6 @@ const LABELS = {
   entities: "Entitäten als Kacheln (mit passenden Reglern)",
   energy_title: "Titel",
   energy_icon: "Icon",
-  evcc_title: "Titel",
-  evcc_icon: "Icon",
   trash_title: "Titel",
   trash_icon: "Icon",
   show_clock: "Uhr anzeigen",
@@ -2456,7 +2419,6 @@ const LABELS = {
   favorites: "Eigene Entitäten zum Steuern",
   energy_cards: "Angezeigte Karten (Reihenfolge per Ziehen)",
   energy_entity: "Täglicher Energieverbrauch (Wert in der Überschrift)",
-  show_evcc: "Modul anzeigen",
   show_trash: "Modul anzeigen",
   theme: "Theme (Farben, Rundungen …)",
   background_image: "Hintergrundbild (z. B. /local/hintergrund.jpg)",
@@ -2744,7 +2706,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
           ],
         });
       };
-      // Zusatzmodule (Energie, EVCC, Müll), die noch nicht im Dashboard sind
+      // Zusatzmodule (Energie, Müll) und gelöschte Etagen, die nicht im Dashboard sind
       this._addOptionalEl = document.createElement("span");
       this._addOptionalEl.className = "add-optional";
       this._addOptionalEl.addEventListener("click", (ev) => {
@@ -3166,9 +3128,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     } else {
       const hint = document.createElement("div");
       hint.className = "body-hint";
-      hint.textContent = kind === "evcc"
-        ? "„Karte hinzufügen“ öffnet die Kartenauswahl wie auf einem normalen Dashboard. Antippen einer EVCC-Karte öffnet den Editor des Entwicklers."
-        : kind === "trash"
+      hint.textContent = kind === "trash"
           ? "„Karte hinzufügen“ öffnet die Kartenauswahl wie auf einem normalen Dashboard. Antippen der Müll-Karte öffnet den Editor des Entwicklers."
           : "„Karte hinzufügen“ öffnet die Kartenauswahl wie auf einem normalen Dashboard. Antippen einer Karte öffnet ihren Editor.";
       const cardsEditor = document.createElement("uz-cards-editor");
@@ -3250,8 +3210,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     if (b.linksEditor) b.linksEditor.links = cfg.home_links;
     if (b.cardsEditor) {
       b.cardsEditor.cards =
-        b.kind === "evcc" ? evccCardsConfig(cfg)
-        : b.kind === "trash" ? trashCardsConfig(cfg)
+        b.kind === "trash" ? trashCardsConfig(cfg)
         : (popup || mod)?.cards || [];
     }
   }
@@ -3275,8 +3234,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
   }
 
   _cardsChanged(body, cards) {
-    if (body.kind === "evcc") this._emit({ evcc_cards: cards });
-    else if (body.kind === "trash") this._emit({ trash_cards: cards });
+    if (body.kind === "trash") this._emit({ trash_cards: cards });
     else if (body.kind === "module") {
       this._emit({ custom_modules: this._modules().map((m) => (m.key === body.key ? { ...m, cards } : m)) });
     } else if (body.kind === "popup") {

@@ -225,7 +225,7 @@ const userConfig = {
   lights_entity: "sensor.angeschaltete_lichter", covers_entity: "sensor.offene_rollos",
   windows_entity: "binary_sensor.fenster_und_turen", extra_tiles: ["input_select.anwesenheit"],
   trash_calendar: "calendar.awido_online", energy_entity: "sensor.daily_consumed_energy",
-  show_evcc: true, hidden_floors: ["temp"], exclude_label: "no_dboard",
+  hidden_floors: ["temp"], exclude_label: "no_dboard",
   persons: ["person.astrid", "person.sebastian", "person.christina"], persons_only_home: false,
   energy_cards: ["now", "day"],
   energy_card: {
@@ -236,9 +236,9 @@ const userConfig = {
     power_battery_in: "sensor.battery_charging_power", power_battery_out: "sensor.battery_discharging_power",
     battery_soc: "sensor.battery_level", show_water: true,
   },
-  modules: ["energy", "evcc", "trash"],
+  modules: ["energy", "trash"],
   hidden_modules: [],
-  grid: [["home", "energy", "trash", "evcc"], ["floor:eg", "floor:og", "floor:speicher", ""]],
+  grid: [["home", "energy", "trash", ""], ["floor:eg", "floor:og", "floor:speicher", ""]],
   weather_entity: "weather.forecast_home",
   weather_badges: ["sensor.weather_station_ausenmodul_temperature"],
   show_clock_weather: true, clock_weather_temperature: "sensor.eve_weather_ba94_temperature",
@@ -272,7 +272,12 @@ check("Wetter in Unser Zuhause (Vorhersage, Uhr-Wetter, Sonne/Mond)",
   ["weather-forecast", "custom:clock-weather-card", "custom:horizon-card"].every((t) => homeTypes.includes(t)), homeTypes.join(","));
 check("Wetter-Überschrift mit Badge",
   view.sections[0].cards.find((c) => c.heading === "Wetter")?.badges?.[0]?.entity === "sensor.weather_station_ausenmodul_temperature");
-check("EVCC in Zelle 4", flatCards(view.sections[3].cards).some((c) => c.type === "custom:evcc-card"));
+check("Freie Zelle 4 in Zeile 1 = Platzhalter", view.sections[3].cards[0]?.type === "custom:uz-spacer-card");
+{
+  // Alte Konfiguration mit EVCC-Modul: EVCC gibt es nicht mehr, Zelle bleibt leer
+  const old = await Strategy.generate({ ...userConfig, modules: ["energy", "evcc", "trash"], grid: [["home", "energy", "trash", "evcc"]], show_evcc: true, evcc_cards: [{ type: "custom:evcc-card" }] }, hass);
+  check("Alte Konfig mit EVCC: kein EVCC-Modul mehr", !JSON.stringify(old.views[0]).includes("evcc-card"));
+}
 check("Leere Zelle = Platzhalter", view.sections[7].cards[0]?.type === "custom:uz-spacer-card");
 const popups = view.sections[0].cards.filter((c) => c.card_type === "pop-up").map((c) => c.hash);
 check("Popups hängen an Unser Zuhause", popups.includes("#uz-wohnzimmer") && popups.includes("#uz-lichter"));
@@ -963,7 +968,7 @@ const withCustom = {
 };
 const v3 = (await Strategy.generate(withCustom, hass)).views[0];
 const gartenCell = v3.sections.findIndex((s) => flatCards(s.cards).some((c) => c.title === "Garten"));
-check("Neues Modul landet automatisch in der ersten freien Zelle", gartenCell === 7, gartenCell);
+check("Neues Modul landet automatisch in der ersten freien Zelle", gartenCell === 3, gartenCell);
 
 // ---------- 3b. Eigene Pop-ups ----------
 console.log("\n— Eigene Pop-ups");
@@ -1164,10 +1169,10 @@ const cardRows = () => [...(itemPage()?.querySelectorAll(".uz-card-row") || [])]
 const addCardButton = () => itemPage()?.querySelector(".uz-add-card");
 
 go("modules");
-check("Liste „Module & Pop-ups“: Unser Zuhause, Energie, EVCC, Müll, Etagen, eigene Module",
-  items().map((i) => i.dataset.id).join(",").replace(/(,floor:[^,]+)+/, ",<etagen>") === "home:home,energy:energy,evcc:evcc,trash:trash,<etagen>,module:garten",
+check("Liste „Module & Pop-ups“: Unser Zuhause, Energie, Müll, Etagen, eigene Module",
+  items().map((i) => i.dataset.id).join(",").replace(/(,floor:[^,]+)+/, ",<etagen>") === "home:home,energy:energy,trash:trash,<etagen>,module:garten",
   items().map((i) => i.dataset.id).join(","));
-check("Sichtbare Module ohne Markierung „ausgeblendet“", !editor.querySelector('.items [data-id="evcc:evcc"] .uz-pill'));
+check("Sichtbare Module ohne Markierung „ausgeblendet“", !editor.querySelector('.items [data-id="trash:trash"] .uz-pill'));
 check("Alle Zusatzmodule aktiv: keine Hinzufügen-Knöpfe dafür", !editor.querySelector(".add-optional [data-add]"));
 
 {
@@ -1183,21 +1188,21 @@ check("Alle Zusatzmodule aktiv: keine Hinzufügen-Knöpfe dafür", !editor.query
   const ids = () => [...ed.querySelectorAll(".items .item")].map((i) => i.dataset.id).join(",");
   const adds = () => [...ed.querySelectorAll(".add-optional [data-add]")].map((b) => b.dataset.add).join(",");
   check("Frisch: Unser Zuhause, Energie und Etagen in der Modulliste", /^home:home,energy:energy,floor:eg,floor:og/.test(ids()), ids());
-  check("Frisch: Knöpfe + EVCC, + Müll", adds() === "evcc,trash", adds());
-  ed.querySelector('.add-optional [data-add="evcc"]').click();
+  check("Frisch: nur Knopf + Müll (kein EVCC mehr)", adds() === "trash", adds());
+  ed.querySelector('.add-optional [data-add="trash"]').click();
   await tick();
-  check("EVCC hinzufügen: modules + Seite des Moduls offen",
-    ch.at(-1)?.modules?.join() === "energy,evcc" && [...ed.querySelectorAll(".uz-top-title")].some((t) => !t.closest("[hidden]") && t.textContent === "EVCC"));
-  const gen = await Strategy.generate(ch.at(-1), hass);
-  check("EVCC erscheint danach im Dashboard", flatCards(gen.views[0].sections.flatMap((x) => x.cards)).some((c) => c.type === "custom:evcc-card"));
+  check("Müll hinzufügen: modules + Seite des Moduls offen",
+    ch.at(-1)?.modules?.join() === "energy,trash" && [...ed.querySelectorAll(".uz-top-title")].some((t) => !t.closest("[hidden]") && t.textContent === "Müll"));
+  const gen = await Strategy.generate({ ...ch.at(-1), trash_calendar: "calendar.awido_online" }, hass);
+  check("Müll erscheint danach im Dashboard", flatCards(gen.views[0].sections.flatMap((x) => x.cards)).some((c) => c.type === "custom:trash-card"));
   const del = () => [...ed.querySelectorAll(".uz-danger .delete")].find((b) => !b.closest("[hidden]"));
-  check("EVCC-Seite hat Löschen-Knopf", Boolean(del()));
+  check("Müll-Seite hat Löschen-Knopf", Boolean(del()));
   del().click();
-  check("Löschen fragt erst nach", ch.at(-1)?.modules?.join() === "energy,evcc" && del().textContent.includes("Wirklich löschen?"));
+  check("Löschen fragt erst nach", ch.at(-1)?.modules?.join() === "energy,trash" && del().textContent.includes("Wirklich löschen?"));
   del().click();
   await tick();
-  check("EVCC gelöscht: nicht mehr in modules, Knopf + EVCC wieder da",
-    ch.at(-1)?.modules?.join() === "energy" && !ids().includes("evcc:evcc") && adds() === "evcc,trash");
+  check("Müll gelöscht: nicht mehr in modules, Knopf + Müll wieder da",
+    ch.at(-1)?.modules?.join() === "energy" && !ids().includes("trash:trash") && adds() === "trash");
 
   // Etage löschen und zurückholen
   ed.querySelector('.items [data-open="floor:og"]').click();
@@ -1207,7 +1212,7 @@ check("Alle Zusatzmodule aktiv: keine Hinzufügen-Knöpfe dafür", !editor.query
   del().click();
   await tick();
   check("Etage OG gelöscht: removed_modules, nicht mehr in der Liste, Knopf + OG",
-    ch.at(-1)?.removed_modules?.join() === "floor:og" && !ids().includes("floor:og") && adds() === "evcc,trash,floor:og");
+    ch.at(-1)?.removed_modules?.join() === "floor:og" && !ids().includes("floor:og") && adds() === "trash,floor:og");
   ed.querySelector('.add-optional [data-add="floor:og"]').click();
   await tick();
   check("Etage OG wieder hinzugefügt", ch.at(-1)?.removed_modules?.length === 0 && ids().includes("floor:og"));
@@ -1300,17 +1305,6 @@ check("Karte nach oben verschieben", changes.at(-1).custom_modules.find((m) => m
 cardRows()[0].querySelector('[data-act="remove"]').click();
 check("Karte entfernen", changes.at(-1).custom_modules.find((m) => m.key === "garten").cards.length === 1);
 check("Geöffneter Editor übersteht setConfig", (editor.setConfig(changes.at(-1)), cardRows().length === 1));
-
-openItem("evcc:evcc");
-await settle();
-check("EVCC: bisherige Karten in der Liste", cardRows().length > 0 && cardRows()[0].textContent.toLowerCase().includes("evcc"));
-cardRows()[0].click();
-check("EVCC-Karte öffnet den Editor (vom Entwickler)", dialogs.at(-1)?.cardConfig?.type === "custom:evcc-card");
-addCardButton().click();
-await dialogs.at(-1).pick({ type: "custom:evcc-card", mode: "stats" });
-check("EVCC: Änderungen in evcc_cards", changes.at(-1).evcc_cards?.at(-1)?.mode === "stats");
-const v5 = (await Strategy.generate({ ...changes.at(-1), show_evcc: true, hidden_modules: [] }, hass)).views[0];
-check("Strategy nutzt die EVCC-Karten aus dem Editor", JSON.stringify(v5).includes('"mode":"stats"'));
 
 openItem("trash:trash");
 await settle();

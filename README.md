@@ -10,7 +10,7 @@ Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard aut
 - **Module in einer Layout-Matrix**: Spaltenanzahl frei wählbar, Module per Drag & Drop anordnen oder ausblenden
   - Unser Zuhause (Uhr, Suche, Status-Kacheln, Favoriten)
   - Energie (Energiefluss aktuell und heute)
-  - EVCC und Müll (anfangs nicht dabei, in den Einstellungen per „+ EVCC“ / „+ Müll“ hinzufügen)
+  - Müll (anfangs nicht dabei, in den Einstellungen per „+ Müll“ hinzufügen)
   - eine Spalte je Etage mit den Räumen als Buttons und Raum-Popups
   - eigene Module, Karten per GUI wie auf normalen Dashboards
 - **Einklappbare Module**, auf dem Handy anfangs eingeklappt
@@ -19,7 +19,7 @@ Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard aut
   - Netz links, PV oben, Batterie unten, Haus mit Anteils-Ring, Wasser oben, Verbraucher rechts
   - Linien animiert nur, wenn gerade Leistung fließt
 - **Echo-Show-Ansicht** für den Echo Show 8 (1280 × 800): alles auf einen Blick ohne Scrollen
-  - Kacheln in 3 Spalten per Drag & Drop oder Antippen anordnen und ausblenden: Uhr, Begrüßung, Hausmodus, Szenen, Status, Energie aktuell/heute, „Läuft gerade“, „Was ist los?“, Räume, Kamera, Wetter, Personen, Favoriten, Müll, EVCC, eigene Module
+  - Kacheln in 3 Spalten per Drag & Drop oder Antippen anordnen und ausblenden: Uhr, Begrüßung, Hausmodus, Szenen, Status, Energie aktuell/heute, „Läuft gerade“, „Was ist los?“, Räume, Kamera, Wetter, Personen, Favoriten, Müll, eigene Module
   - Kamera als Standbild (springt bei Bewegung auf die aktive Kamera)
   - Antippen der Energiekarte öffnet die Energie-Seite
   - Startseite für die gewählten Benutzer (Einstellungen → „Echo Show“), sonst Unterseite `…/echo-show`
@@ -38,7 +38,6 @@ Außerdem über HACS:
 - [Bubble Card](https://github.com/Clooos/Bubble-Card)
 - [search-card](https://github.com/postlund/search-card)
 - [trash-card](https://github.com/idaho/hassio-trash-card) (nur für das Müll-Modul)
-- [EVCC Card](https://github.com/mkshb/hass-evcc-card) (nur für das EVCC-Modul)
 
 ## Installation über HACS
 
@@ -76,15 +75,15 @@ devices: [Wallbox, Heizung]
 
 ## Module, eigene Module und Pop-ups
 
-In den Einstellungen unter „Module & Pop-ups“ öffnet ein Klick auf einen Eintrag dessen Einstellungen. Karten fügst du wie auf einem normalen Dashboard hinzu: „Karte hinzufügen“ öffnet den gewohnten Dialog von Home Assistant (Kartenauswahl, Suche, „Nach Entität“), danach der Editor mit Vorschau, den der Entwickler der Karte mitliefert. Ein Klick auf eine Karte in der Liste öffnet sie wieder zum Bearbeiten (zum Beispiel der EVCC- oder der Müll-Editor). YAML brauchst du dafür nicht.
+In den Einstellungen unter „Module & Pop-ups“ öffnet ein Klick auf einen Eintrag dessen Einstellungen. Karten fügst du wie auf einem normalen Dashboard hinzu: „Karte hinzufügen“ öffnet den gewohnten Dialog von Home Assistant (Kartenauswahl, Suche, „Nach Entität“), danach der Editor mit Vorschau, den der Entwickler der Karte mitliefert. Ein Klick auf eine Karte in der Liste öffnet sie wieder zum Bearbeiten (zum Beispiel der Müll-Editor). YAML brauchst du dafür nicht.
 
 - **Energie**: Editor der Energiekarten
-- **EVCC** und **Müll**: Karten-Editor (gespeichert in `evcc_cards` / `trash_cards`)
-- **Eigene Module** und **Pop-ups**: Titel, Icon und Karten-Editor
+- **Müll**: Karten-Editor (gespeichert in `trash_cards`)
+- **Eigene Module** und **Pop-ups**: Titel, Icon und Karten-Editor – zum Beispiel ein Modul „EVCC“ mit der [EVCC Card](https://github.com/mkshb/hass-evcc-card)
 
 Neue Module erscheinen im Layout-Editor und lassen sich in jede Spalte ziehen.
 
-Energie, EVCC, Müll und die Etagen (bzw. „Räume“) lassen sich unten auf ihrer Seite löschen und oben über „+ <Name>“ wieder hinzufügen. Beim Start sind „Unser Zuhause“, Energie und die Etagen dabei. Die Einstellungen eines gelöschten Moduls bleiben erhalten (Optionen `modules` und `removed_modules`).
+Energie, Müll und die Etagen (bzw. „Räume“) lassen sich unten auf ihrer Seite löschen und oben über „+ <Name>“ wieder hinzufügen. Beim Start sind „Unser Zuhause“, Energie und die Etagen dabei. Die Einstellungen eines gelöschten Moduls bleiben erhalten (Optionen `modules` und `removed_modules`).
 
 Das ganze Dashboard löschst du nur unter Einstellungen → Dashboards; der „Löschen“-Knopf im Einstellungsdialog des Dashboards ist ausgeblendet.
 
@@ -101,7 +100,7 @@ Ohne Einstellungen erkennt die Strategy automatisch:
 - Status-Kacheln aus der Integration „Unser Zuhause“
 - Leistung von Netz, PV und Batterie, wenn im Energie-Dashboard Leistungssensoren hinterlegt sind
 
-Müll (Kalender) und EVCC fügst du unter „Module & Pop-ups“ hinzu und richtest sie dort ein.
+Müll (Kalender) fügst du unter „Module & Pop-ups“ hinzu und richtest ihn dort ein.
 
 ## Lizenz
 
