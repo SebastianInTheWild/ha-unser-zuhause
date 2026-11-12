@@ -4,7 +4,7 @@
 // Benötigt (HACS): „Unser Zuhause – Karten“ (uz-*-Karten), Integration „Unser Zuhause“,
 //                  Bubble Card, search-card, trash-card, evcc-card
 
-const UZ_VERSION = "1.1.0";
+const UZ_VERSION = "1.2.0";
 
 // Neutrale Standardwerte (keine installationsspezifischen Entitäten).
 // Alle Einstellungen der Nutzer stehen in der Dashboard-Konfiguration und bleiben bei Updates erhalten.
