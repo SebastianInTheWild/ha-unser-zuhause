@@ -4,7 +4,7 @@
 // Benötigt (HACS): „Unser Zuhause – Karten“ (uz-*-Karten), Integration „Unser Zuhause“,
 //                  Bubble Card, search-card, trash-card
 
-const UZ_VERSION = "1.2.0";
+const UZ_VERSION = "1.2.1";
 
 // Neutrale Standardwerte (keine installationsspezifischen Entitäten).
 // Alle Einstellungen der Nutzer stehen in der Dashboard-Konfiguration und bleiben bei Updates erhalten.
@@ -90,15 +90,11 @@ const DEFAULTS = {
   // Unterseite „Energie“ (Verlauf, Autarkie, Geräte); Kachel unten im Energie-Modul
   show_energy_page: true,
   energy_page_title: "Energie",
-  // Tablet-Ansicht: große Uhr, Hausmodus, Kameras; für diese Benutzer die Startseite
-  tablet_users: [],
-  tablet_title: "Tablet",
-  tablet_cameras: [], // leer = die ersten 4 Kameras
-  // Echo-Show-Ansicht (Echo Show 8, 1280 × 800): für diese Benutzer die Startseite
-  echo_users: [],
-  echo_title: "Echo Show",
-  echo_camera: "", // Kamera-Standbild (leer = keins)
-  echo_layout: [], // 3 Spalten mit Kacheln, z. B. [["clock", "greeting"], ["energy_now"], ["rooms"]]; leer = Standard
+  // Display-Dashboards (Wandtablet, Echo Show …): je Display eine eigene Seite, für die gewählten Benutzer die Startseite.
+  // displays: [{ key, name, icon, size, users: [], camera: "", cameras: [], layout: [[kachel, …], …] }]
+  // Fehlt die Liste, werden frühere Einstellungen (tablet_* / echo_*) übernommen.
+  // Begrüßung ohne Vornamen für diese Benutzer (z. B. das Service-Konto eines Displays)
+  greeting_hide_name_users: [],
   show_system: true, // Unterseite „System“ mit Serverzustand
   system_tile: true, // Kachel in „Unser Zuhause“, öffnet die System-Seite
   system_title: "System",
@@ -339,6 +335,7 @@ function headerCards(cfg) {
           ...(cfg._windowsCount ? { windows_count: cfg._windowsCount } : {}),
           ...(cfg.trash_calendar ? { trash_calendar: cfg.trash_calendar } : {}),
           weekly_review: cfg.weekly_review,
+          ...(cfg.greeting_hide_name_users?.length ? { hide_name_users: cfg.greeting_hide_name_users } : {}),
           ...(cfg._energyStats ? { energy: cfg._energyStats } : {}),
           grid_options: { columns: "full" },
         }]
@@ -1132,11 +1129,10 @@ function cameraView(cfg, cameras) {
   };
 }
 
-// ---------- Tablet-Ansicht ----------
-// Große Uhr, Hausmodus, Status und Kameras. Für die gewählten Benutzer die erste Seite,
-// für alle anderen eine Unterseite (Adresse …/tablet), damit sie sich prüfen lässt.
-
-const TABLET_PATH = "tablet";
+// ---------- Display-Dashboards ----------
+// Eigene Seiten für Wandtablets, Echo Show & Co.: Kacheln in Spalten passend zur Auflösung, große
+// Tippflächen, keine Kopfzeile und keine Suche. Für die gewählten Benutzer die erste Seite, für alle
+// anderen eine Unterseite (Adresse …/<key>), damit sie sich prüfen lässt.
 
 const personBadges = (cfg) =>
   cfg.persons.map((entity) => ({
@@ -1149,69 +1145,36 @@ const personBadges = (cfg) =>
     ...(cfg.persons_only_home ? { visibility: [{ condition: "state", entity, state: "home" }] } : {}),
   }));
 
-function tabletView(cfg, cameras, prefs, isTabletUser) {
-  const s = energySources(prefs);
-  const cams = (Array.isArray(cfg.tablet_cameras) && cfg.tablet_cameras.length ? cfg.tablet_cameras : cameras).slice(0, 6);
-  const big = (entity, name, icon, extra = {}) => ({ type: "tile", entity, name, icon, vertical: false, grid_options: { columns: 6, rows: 2 }, ...extra });
-  const left = [
-    { type: "clock", clock_size: "large", show_seconds: false, grid_options: { columns: "full", rows: 2 } },
-    cfg.house_mode_entity && {
-      type: "tile",
-      entity: cfg.house_mode_entity,
-      ...(cfg.house_mode_from_integration ? { name: "Hausmodus" } : {}),
-      hide_state: true,
-      vertical: false,
-      features: [{ type: "select-options" }],
-      features_position: "inline",
-      grid_options: { columns: "full", rows: 2 },
-    },
-    cfg.lights_entity && big(cfg.lights_entity, "Lichter an", "mdi:lightbulb-on-outline", { tap_action: navigate("#uz-lichter") }),
-    cfg.windows_entity && big(cfg.windows_entity, "Fenster & Türen", undefined, { tap_action: navigate("#uz-fenster") }),
-    cfg.covers_entity && big(cfg.covers_entity, "Rollos offen", "mdi:window-shutter-open", { tap_action: navigate("#uz-rollos") }),
-    cfg.weather_entity && {
-      type: "weather-forecast", entity: cfg.weather_entity, show_current: true, show_forecast: true, forecast_type: "daily",
-      forecast_slots: 5, grid_options: { columns: "full" },
-    },
-    (s.gridFrom || s.solar || s.batteryOut) && { ...energyCardConfig(cfg), type: "custom:uz-energy-now-card" },
-  ].filter(Boolean);
-  const sections = [
-    { type: "grid", cards: left },
-    cams.length && {
-      type: "grid",
-      column_span: 2,
-      cards: [{
-        type: "custom:uz-camera-grid-card",
-        cameras: cams,
-        columns: 2,
-        live: cfg.camera_live,
-        aspect_ratio: cfg.camera_aspect,
-        highlight_motion: cfg.camera_motion,
-        grid_options: { columns: "full" },
-      }],
-    },
-  ].filter(Boolean);
-  return {
-    title: cfg.tablet_title,
-    path: TABLET_PATH,
-    icon: "mdi:tablet",
-    type: "sections",
-    max_columns: 3,
-    ...(isTabletUser ? {} : { subview: true }),
-    ...viewLook(cfg),
-    badges: personBadges(cfg),
-    sections,
-  };
-}
+// Auflösungen → Spalten, die ohne Scrollen nebeneinander passen (Abschnitte sind mind. 320 px breit)
+const DISPLAY_SIZES = [
+  { key: "960x480", name: "960 × 480", hint: "Echo Show 5", width: 960, height: 480, cols: 2 },
+  { key: "1024x600", name: "1024 × 600", hint: "Echo Show (1./2. Gen.), 7-Zoll-Tablets", width: 1024, height: 600, cols: 3 },
+  { key: "1024x768", name: "1024 × 768", hint: "iPad quer", width: 1024, height: 768, cols: 3 },
+  { key: "1280x800", name: "1280 × 800", hint: "Echo Show 8 / 10, 8- bis 10-Zoll-Tablets", width: 1280, height: 800, cols: 3 },
+  { key: "1920x1080", name: "1920 × 1080", hint: "Echo Show 15 / 21, Full-HD-Bildschirme", width: 1920, height: 1080, cols: 4 },
+  { key: "1920x1200", name: "1920 × 1200", hint: "Fire HD 10, 10-Zoll-Tablets", width: 1920, height: 1200, cols: 4 },
+  { key: "800x1280", name: "800 × 1280 (hochkant)", hint: "Tablets hochkant", width: 800, height: 1280, cols: 2 },
+];
+// Eigene Maße (size "custom"): Breite/Höhe frei, Spalten frei oder aus der Breite (etwa 400 px je Spalte)
+const autoDisplayCols = (width) => Math.min(4, Math.max(1, Math.round(width / 400)));
+const clampInt = (v, min, max, fallback) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.min(max, Math.max(min, n)) : fallback;
+};
+// Nimmt ein Display (oder nur den Schlüssel der Auflösung)
+const displaySize = (d) => {
+  const key = typeof d === "string" ? d : d?.size;
+  if (key === "custom" && d && typeof d === "object") {
+    const width = clampInt(d.width, 320, 7680, 1280);
+    const height = clampInt(d.height, 240, 4320, 800);
+    const cols = clampInt(d.cols, 1, 4, autoDisplayCols(width));
+    return { key: "custom", name: `${width} × ${height}`, hint: "Eigene Maße", width, height, cols };
+  }
+  return DISPLAY_SIZES.find((x) => x.key === key) || DISPLAY_SIZES.find((x) => x.key === "1280x800");
+};
 
-// ---------- Echo-Show-Ansicht ----------
-// Für Amazon Echo Show 8 (1280 × 800 quer, Silk-Browser): drei Spalten auf einen Blick ohne Scrollen,
-// große Tippflächen, keine Kopfzeile, keine Suche, keine Live-Streams. Für die gewählten Benutzer
-// die erste Seite, für alle anderen eine Unterseite (Adresse …/echo-show).
-
-const ECHO_PATH = "echo-show";
-
-// Kacheln, die sich auf der Echo-Show-Seite anordnen lassen (gemeinsam für Strategy und Editor)
-function echoCatalog(cfg) {
+// Kacheln, die sich auf einem Display anordnen lassen (gemeinsam für Strategy und Editor)
+function displayCatalog(cfg) {
   return [
     { key: "clock", name: "Uhr", icon: "mdi:clock-outline" },
     { key: "greeting", name: "Begrüßung", icon: "mdi:hand-wave-outline" },
@@ -1223,7 +1186,8 @@ function echoCatalog(cfg) {
     { key: "running", name: "Läuft gerade", icon: "mdi:play-circle-outline" },
     { key: "alerts", name: "Was ist los?", icon: "mdi:bell-alert-outline" },
     { key: "rooms", name: "Räume", icon: "mdi:floor-plan" },
-    { key: "camera", name: "Kamera", icon: "mdi:cctv" },
+    { key: "camera", name: "Kamera (Standbild)", icon: "mdi:cctv" },
+    { key: "cameras", name: "Kameras (live)", icon: "mdi:view-grid-outline" },
     { key: "weather", name: "Wetter", icon: "mdi:weather-partly-cloudy" },
     { key: "persons", name: "Personen", icon: "mdi:account-group" },
     { key: "favorites", name: "Favoriten", icon: "mdi:star" },
@@ -1234,24 +1198,51 @@ function echoCatalog(cfg) {
   ];
 }
 
-const ECHO_DEFAULT_LAYOUT = [
-  ["clock", "greeting", "house_mode", "scenes", "status"],
-  ["energy_now", "running", "alerts"],
-  ["rooms", "camera"],
-];
+// Standard-Anordnung je Spaltenzahl (gilt, solange für das Display nichts gespeichert ist)
+const DISPLAY_DEFAULT_LAYOUTS = {
+  1: [["clock", "greeting", "house_mode", "status", "energy_now", "alerts", "rooms"]],
+  2: [["clock", "greeting", "house_mode", "status"], ["energy_now", "alerts", "rooms"]],
+  3: [["clock", "greeting", "house_mode", "scenes", "status"], ["energy_now", "running", "alerts"], ["rooms", "camera"]],
+  4: [["clock", "greeting", "house_mode", "scenes", "status"], ["energy_now", "running", "alerts"], ["rooms"], ["cameras"]],
+};
 
-// Gespeicherte Anordnung bereinigen: immer 3 Spalten, unbekannte Kacheln raus, jede Kachel nur einmal.
-// Was in keiner Spalte steht, ist ausgeblendet (neue Kacheln erscheinen also nicht ungefragt).
-function normalizeEchoLayout(cfg, keys) {
-  const saved = Array.isArray(cfg.echo_layout) && cfg.echo_layout.some((c) => Array.isArray(c) && c.length);
-  const src = saved ? cfg.echo_layout : ECHO_DEFAULT_LAYOUT;
+// Alle Displays; ohne gespeicherte Liste aus den früheren Tablet-/Echo-Show-Einstellungen
+function displayList(cfg) {
+  if (Array.isArray(cfg.displays)) return cfg.displays.filter((d) => d && d.key);
+  const list = [];
+  if (Array.isArray(cfg.tablet_users) && cfg.tablet_users.length) {
+    list.push({
+      key: "tablet", name: cfg.tablet_title || "Tablet", icon: "mdi:tablet", size: "1280x800",
+      users: cfg.tablet_users, camera: "", cameras: cfg.tablet_cameras || [],
+      layout: [["clock", "house_mode", "status", "weather", "energy_now"], ["cameras"], []],
+    });
+  }
+  if (Array.isArray(cfg.echo_users) && cfg.echo_users.length) {
+    list.push({
+      key: "echo-show", name: cfg.echo_title || "Echo Show", icon: "mdi:tablet-dashboard", size: "1280x800",
+      users: cfg.echo_users, camera: cfg.echo_camera || "", cameras: [],
+      layout: Array.isArray(cfg.echo_layout) ? cfg.echo_layout : [],
+    });
+  }
+  return list;
+}
+
+// Gespeicherte Anordnung bereinigen: so viele Spalten wie die Auflösung hergibt, unbekannte Kacheln raus,
+// jede Kachel nur einmal. Was in keiner Spalte steht, ist ausgeblendet (neue Kacheln erscheinen nicht ungefragt).
+// Mehr gespeicherte Spalten als Platz (kleinere Auflösung gewählt): Rest kommt in die letzte Spalte.
+function normalizeDisplayLayout(display, keys) {
+  const n = displaySize(display).cols;
+  const saved = Array.isArray(display.layout) && display.layout.some((c) => Array.isArray(c) && c.length);
+  const src = saved ? display.layout : DISPLAY_DEFAULT_LAYOUTS[n];
   const seen = new Set();
-  const cols = [0, 1, 2].map((i) =>
-    (Array.isArray(src[i]) ? src[i] : []).filter((k) => keys.includes(k) && !seen.has(k) && seen.add(k)));
+  const take = (c) => (Array.isArray(c) ? c : []).filter((k) => keys.includes(k) && !seen.has(k) && seen.add(k));
+  const cols = Array.from({ length: n }, (_, i) => take(src[i]));
+  src.slice(n).forEach((c) => cols[n - 1].push(...take(c)));
   return { cols, hidden: keys.filter((k) => !seen.has(k)) };
 }
 
-function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath) {
+function displayView(cfg, display, ctx, isMine) {
+  const { prefs, areas, classified, popups, energyPath, cameras } = ctx;
   const s = energySources(prefs);
   const hasEnergy = Boolean(s.gridFrom || s.solar || s.batteryOut);
   const full = { grid_options: { columns: "full" } };
@@ -1278,6 +1269,7 @@ function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath)
       ...(cfg._windowsCount ? { windows_count: cfg._windowsCount } : {}),
       ...(cfg.trash_calendar ? { trash_calendar: cfg.trash_calendar } : {}),
       weekly_review: "off",
+      ...(cfg.greeting_hide_name_users?.length ? { hide_name_users: cfg.greeting_hide_name_users } : {}),
       ...full,
     }],
     house_mode: () => (cfg.house_mode_entity
@@ -1321,10 +1313,10 @@ function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath)
     }],
     rooms: () => areas.map(room),
     // Kamera als Standbild; bei Bewegung springt die Vorschau auf die aktive Kamera
-    camera: () => (cfg.echo_camera
+    camera: () => (display.camera
       ? [{
           type: "custom:uz-camera-preview",
-          camera: cfg.echo_camera,
+          camera: display.camera,
           ...(cfg.camera_motion && cfg._cameras?.length ? { cameras: cfg._cameras } : {}),
           live: false,
           path: CAMERA_PATH,
@@ -1336,10 +1328,25 @@ function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath)
       : []),
     persons: () => (cfg._personTiles?.length ? [{ type: "custom:uz-person-card", entities: cfg._personTiles, ...full }] : []),
     favorites: () => (cfg.favorites || []).map((e) => inlineTile(e, FAVORITE_FEATURES[e.split(".")[0]] || [])),
+    // Mehrere Kameras live nebeneinander (wie früher auf dem Tablet)
+    cameras: () => {
+      const cams = (Array.isArray(display.cameras) && display.cameras.length ? display.cameras : cameras).slice(0, 6);
+      return cams.length
+        ? [{
+            type: "custom:uz-camera-grid-card",
+            cameras: cams,
+            columns: 2,
+            live: cfg.camera_live,
+            aspect_ratio: cfg.camera_aspect,
+            highlight_motion: cfg.camera_motion,
+            ...full,
+          }]
+        : [];
+    },
     trash: () => trashCardsConfig(cfg),
     ...custom,
   };
-  const { cols } = normalizeEchoLayout(cfg, echoCatalog(cfg).map((t) => t.key));
+  const { cols } = normalizeDisplayLayout(display, displayCatalog(cfg).map((t) => t.key));
   const sections = cols
     .map((keys) => keys.flatMap((k) => tiles[k]?.() || []))
     .filter((cards) => cards.length)
@@ -1347,12 +1354,12 @@ function echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath)
   if (!sections.length) sections.push({ type: "grid", cards: [] });
   sections[0].cards.push(...popups);
   return {
-    title: cfg.echo_title,
-    path: ECHO_PATH,
-    icon: "mdi:tablet-dashboard",
+    title: display.name || "Display",
+    path: display.key,
+    icon: display.icon || "mdi:monitor-dashboard",
     type: "sections",
-    max_columns: 3,
-    ...(isEchoUser ? {} : { subview: true }),
+    max_columns: displaySize(display).cols,
+    ...(isMine ? {} : { subview: true }),
     ...viewLook(cfg),
     sections,
   };
@@ -1458,24 +1465,20 @@ class UnserZuhauseStrategy extends HTMLElement {
     const homeIndex = cells.indexOf("home");
     sections[homeIndex >= 0 ? homeIndex : 0].cards.push(...popups);
 
-    // Tablet: für die gewählten Benutzer erste Seite, sonst Unterseite
-    const tabletUsers = Array.isArray(cfg.tablet_users) ? cfg.tablet_users : [];
-    const isTabletUser = Boolean(hass.user?.id && tabletUsers.includes(hass.user.id));
-    const tablet = tabletUsers.length ? tabletView(cfg, cameras, prefs, isTabletUser) : undefined;
-    // Echo Show: wie Tablet; ist ein Benutzer in beiden Listen, gewinnt das Tablet
-    const echoUsers = Array.isArray(cfg.echo_users) ? cfg.echo_users : [];
-    const isEchoUser = Boolean(!isTabletUser && hass.user?.id && echoUsers.includes(hass.user.id));
     const s = energySources(prefs);
     // Energie-Seite nur mit Energie-Modul (dort hängt ihre Kachel)
     const hasEnergy = enabledModules(cfg).includes("energy") && Boolean(s.gridFrom || s.solar || s.batteryOut);
     // Antippen der Energiekarten: eigene Energie-Seite, sonst das Energie-Dashboard von HA
     const energyPath = cfg.show_energy_page && hasEnergy ? ENERGY_PATH : "/energy";
-    const echo = echoUsers.length ? echoView(cfg, prefs, areas, classified, popups, isEchoUser, energyPath) : undefined;
+    // Displays: für ihre Benutzer die erste Seite (steht ein Benutzer bei mehreren, gewinnt das erste), sonst Unterseite
+    const displays = displayList(cfg);
+    const mine = displays.find((d) => hass.user?.id && (d.users || []).includes(hass.user.id));
+    const ctx = { prefs, areas, classified, popups, energyPath, cameras };
+    const displayViews = displays.map((d) => ({ d, view: displayView(cfg, d, ctx, d === mine) }));
 
     return {
       views: [
-        ...(tablet && isTabletUser ? [tablet] : []),
-        ...(echo && isEchoUser ? [echo] : []),
+        ...displayViews.filter((x) => x.d === mine).map((x) => x.view),
         {
           title: cfg.title,
           path: "zuhause",
@@ -1502,8 +1505,7 @@ class UnserZuhauseStrategy extends HTMLElement {
         ...(cfg.show_cameras && cameras.length ? [cameraView(cfg, cameras)] : []),
         ...(cfg._batteryPage ? [batteryView(cfg)] : []),
         ...(cfg.show_energy_page && hasEnergy ? [energyView(cfg, prefs)] : []),
-        ...(tablet && !isTabletUser ? [tablet] : []),
-        ...(echo && !isEchoUser ? [echo] : []),
+        ...displayViews.filter((x) => x.d !== mine).map((x) => x.view),
         ...Object.values(embedded).flatMap((e) => e.views),
       ],
     };
@@ -2038,6 +2040,56 @@ const badgeHideStateSchema = (badges) =>
       }]
     : [];
 
+// Formular eines Display-Dashboards (Kacheln ordnet der Layout-Editor darunter an)
+const userOptions = (users) => users.map((u) => ({ value: u.id, label: u.name }));
+const DISPLAY_SCHEMA = (users = [], custom = false) => [
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "name", selector: { text: {} } },
+      { name: "icon", selector: { icon: {} } },
+    ],
+  },
+  {
+    name: "size",
+    selector: {
+      select: {
+        mode: "dropdown",
+        options: [
+          ...DISPLAY_SIZES.map((x) => ({ value: x.key, label: `${x.name} – ${x.hint} (${x.cols} Spalten)` })),
+          { value: "custom", label: "Eigene Maße …" },
+        ],
+      },
+    },
+  },
+  ...(custom
+    ? [{
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "width", selector: { number: { min: 320, max: 7680, step: 1, mode: "box", unit_of_measurement: "px" } } },
+          { name: "height", selector: { number: { min: 240, max: 4320, step: 1, mode: "box", unit_of_measurement: "px" } } },
+          { name: "cols", selector: { number: { min: 1, max: 4, step: 1, mode: "box" } } },
+        ],
+      }]
+    : []),
+  { name: "users", selector: { select: { multiple: true, mode: "list", options: userOptions(users) } } },
+  { name: "camera", selector: { entity: { filter: { domain: "camera" } } } },
+  { name: "cameras", selector: { entity: { multiple: true, reorder: true, filter: { domain: "camera" } } } },
+];
+const DISPLAY_LABELS = {
+  name: "Name",
+  icon: "Icon",
+  size: "Auflösung",
+  width: "Breite",
+  height: "Höhe",
+  cols: "Spalten (leer = aus der Breite)",
+  users: "Startseite für diese Benutzer (z. B. das Konto des Geräts)",
+  camera: "Kachel „Kamera (Standbild)“: Kamera (bei Bewegung springt sie auf die aktive Kamera)",
+  cameras: "Kachel „Kameras (live)“: Kameras (leer = die ersten, höchstens 6)",
+};
+
 // Seiten des Einstellungsmenüs: Startseite mit Bereichen, jeder Bereich eine eigene Seite
 const EDITOR_PAGES = {
   layout: {
@@ -2075,19 +2127,12 @@ const EDITOR_PAGES = {
     group: "Aufbau",
     info: "Seite mit dem Zustand deines Home-Assistant-Servers und eine farbige Kachel in „Unser Zuhause“, die sie öffnet.",
   },
-  tablet: {
-    title: "Tablet",
-    icon: "mdi:tablet",
+  displays: {
+    title: "Display-Dashboards",
+    icon: "mdi:monitor-dashboard",
     color: "#6366f1",
     group: "Aufbau",
-    info: "Eigene Startseite für ein Wandtablet: große Uhr, Hausmodus, Status und Kameras. Gilt für die gewählten Benutzer.",
-  },
-  echo: {
-    title: "Echo Show",
-    icon: "mdi:tablet-dashboard",
-    color: "#06b6d4",
-    group: "Aufbau",
-    info: "Eigene Startseite für einen Echo Show 8 (1280 × 800): alles auf einen Blick ohne Scrollen. Kacheln in 3 Spalten anordnen oder ausblenden. Gilt für die gewählten Benutzer.",
+    info: "Eigene Seiten für Wandtablets, Echo Show & Co.: Auflösung wählen, Kacheln in Spalten anordnen und einem Benutzer zuordnen – für ihn ist es dann die Startseite.",
   },
   header: {
     title: "Kopfzeile",
@@ -2131,16 +2176,6 @@ const PAGE_SCHEMAS = {
     { name: "show_cameras", selector: { boolean: {} } },
     { name: "camera_tile", selector: { boolean: {} } },
     { name: "camera_title", selector: { text: {} } },
-  ],
-  tablet: (badges, users = []) => [
-    { name: "tablet_users", selector: { select: { multiple: true, mode: "list", options: users.map((u) => ({ value: u.id, label: u.name })) } } },
-    { name: "tablet_title", selector: { text: {} } },
-    { name: "tablet_cameras", selector: { entity: { multiple: true, reorder: true, filter: { domain: "camera" } } } },
-  ],
-  echo: (badges, users = []) => [
-    { name: "echo_users", selector: { select: { multiple: true, mode: "list", options: users.map((u) => ({ value: u.id, label: u.name })) } } },
-    { name: "echo_title", selector: { text: {} } },
-    { name: "echo_camera", selector: { entity: { filter: { domain: "camera" } } } },
   ],
   system: () => [
     { name: "show_system", selector: { boolean: {} } },
@@ -2206,7 +2241,7 @@ const titleIcon = (title, icon) => ({
 const ITEM_SCHEMAS = {
   floor: () => [],
   rooms: () => [],
-  home: () => [
+  home: (users = []) => [
     titleIcon("title", "icon"),
     {
       type: "grid",
@@ -2238,6 +2273,9 @@ const ITEM_SCHEMAS = {
             { value: "off", label: "Aus" },
           ] } },
         },
+        ...(users.length
+          ? [{ name: "greeting_hide_name_users", selector: { select: { multiple: true, mode: "list", options: userOptions(users) } } }]
+          : []),
         { name: "scenes", selector: { entity: { multiple: true, reorder: true, filter: { domain: ["scene", "script", "automation", "switch", "input_boolean", "button"] } } } },
         { name: "scene_all_off", selector: { boolean: {} } },
       ],
@@ -2359,12 +2397,7 @@ const INTEGRATION_LABELS = {
 const LABELS = {
   show_cameras: "Kamera-Seite anzeigen",
   show_energy_page: "Seite „Verlauf & Bilanz“ (Autarkie, Verlauf, Geräte) mit Kachel im Modul",
-  tablet_users: "Benutzer mit Tablet-Startseite (z. B. der Benutzer des Wandtablets)",
-  tablet_title: "Titel",
-  tablet_cameras: "Kameras auf dem Tablet (leer = die ersten Kameras, höchstens 6)",
-  echo_users: "Benutzer mit Echo-Show-Startseite (z. B. ein eigener Benutzer für den Echo Show)",
-  echo_title: "Titel",
-  echo_camera: "Kamera-Standbild (leer = keins; bei Bewegung springt es auf die aktive Kamera)",
+  greeting_hide_name_users: "Begrüßung ohne Vornamen für diese Benutzer (z. B. Service-Konto eines Displays)",
   camera_tile: "Kachel „Kameras“ in Unser Zuhause",
   camera_title: "Titel",
   show_system: "System-Seite anzeigen",
@@ -2628,6 +2661,8 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
   _refresh() {
     this._syncForm();
     this._renderLayout();
+    this._renderDisplays();
+    this._syncDisplayPage();
     this._renderEchoLayout();
     this._renderItems();
     this._renderHome();
@@ -2640,13 +2675,6 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     if (page) {
       const badges = Array.isArray(this._config.badges) ? this._config.badges : [];
       // Schema nur bei Änderung neu setzen, sonst klappen offene Bereiche beim Tippen zu
-      if ((page === "tablet" || page === "echo") && !this._usersLoading) {
-        this._usersLoading = true;
-        this._hass.callWS({ type: "config/auth/list" })
-          .then((list) => (this._users = list.filter((u) => !u.system_generated && u.is_active !== false)))
-          .catch(() => (this._users = []))
-          .then(() => this._syncForm());
-      }
       const schemaKey = JSON.stringify([page, badges, (this._users || []).length]);
       if (schemaKey !== this._schemaKey) {
         this._schemaKey = schemaKey;
@@ -2657,8 +2685,40 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     this._syncItemBody();
   }
 
+  // Benutzer (ohne Systemkonten) für Display-Seiten und Begrüßung; einmal laden
+  _ensureUsers() {
+    if (this._usersLoading || !this._hass?.callWS) return;
+    this._usersLoading = true;
+    this._hass.callWS({ type: "config/auth/list" })
+      .then((list) => (this._users = list.filter((u) => !u.system_generated && u.is_active !== false)))
+      .catch(() => (this._users = []))
+      .then(() => {
+        if (this._itemBody?.kind === "home") this._itemBody.form.schema = ITEM_SCHEMAS.home(this._users);
+        this._displaySchemaKey = undefined;
+        this._refresh();
+      });
+  }
+
+  _displays() {
+    return displayList(withDefaults(this._config || {}));
+  }
+
+  // Displays speichern; frühere Einzel-Einstellungen (Tablet/Echo Show) sind damit übernommen
+  _saveDisplays(list) {
+    this._emit({
+      displays: list,
+      tablet_users: undefined, tablet_title: undefined, tablet_cameras: undefined,
+      echo_users: undefined, echo_title: undefined, echo_camera: undefined, echo_layout: undefined,
+    });
+  }
+
+  _updateDisplay(key, patch) {
+    this._saveDisplays(this._displays().map((d) => (d.key === key ? { ...d, ...patch } : d)));
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
+    this._ensureUsers();
     if (!this._form) {
       this._page = this._page || "home";
       const style = document.createElement("style");
@@ -2667,7 +2727,9 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
       this._topEl = document.createElement("div");
       this._topEl.className = "uz-top";
       this._topEl.addEventListener("click", (ev) => {
-        if (ev.target.closest?.(".uz-back")) this._go(this._page.startsWith("item:") ? "modules" : "home");
+        if (ev.target.closest?.(".uz-back")) {
+          this._go(this._page.startsWith("item:") ? "modules" : this._page.startsWith("display:") ? "displays" : "home");
+        }
       });
 
       this._homeEl = document.createElement("div");
@@ -2679,8 +2741,62 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
 
       this._layoutEl = document.createElement("div");
       this._layoutEl.className = "uz-page layout";
+      // Display-Dashboards: Liste + „hinzufügen“; Antippen öffnet die Seite des Displays
+      this._displaysEl = document.createElement("div");
+      this._displaysEl.className = "uz-page uz-displays";
+      const addDisplay = document.createElement("button");
+      addDisplay.className = "add-module add-display";
+      addDisplay.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Display-Dashboard`;
+      addDisplay.onclick = () => {
+        const key = `display-${Date.now().toString(36)}`;
+        this._page = `display:${key}`;
+        this._saveDisplays([
+          ...this._displays(),
+          { key, name: "Neues Display", icon: "mdi:monitor-dashboard", size: "1280x800", users: [], camera: "", cameras: [], layout: [] },
+        ]);
+      };
+      const displayButtons = document.createElement("div");
+      displayButtons.className = "add-buttons";
+      displayButtons.append(addDisplay);
+      this._displayListEl = document.createElement("div");
+      this._displayListEl.className = "uz-list display-list";
+      this._displayListEl.addEventListener("click", (ev) => {
+        const row = ev.target.closest?.("[data-display]");
+        if (row) this._go(`display:${row.dataset.display}`);
+      });
+      this._displaysEl.append(displayButtons, this._displayListEl);
+
+      // Seite eines Displays: Formular, Kachel-Anordnung, Löschen
+      this._displayPageEl = document.createElement("div");
+      this._displayPageEl.className = "uz-page uz-display-page";
+      this._displayForm = document.createElement("ha-form");
+      this._displayForm.schema = [];
+      this._displayForm.computeLabel = (sch) => DISPLAY_LABELS[sch.name] ?? sch.name;
+      this._displayForm.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        const key = this._page.slice(8);
+        const v = ev.detail.value;
+        const size = v.size || "1280x800";
+        // Wechsel auf eigene Maße: mit den Maßen der bisherigen Auflösung beginnen
+        const prev = displaySize(this._displays().find((d) => d.key === key));
+        const custom = size === "custom"
+          ? { width: v.width || prev.width, height: v.height || prev.height, cols: v.cols || undefined }
+          : { width: undefined, height: undefined, cols: undefined };
+        this._updateDisplay(key, {
+          name: v.name || "", icon: v.icon || "", size, ...custom,
+          users: v.users || [], camera: v.camera || "", cameras: v.cameras || [],
+        });
+      });
       this._echoLayoutEl = document.createElement("div");
-      this._echoLayoutEl.className = "uz-page layout echo-layout";
+      this._echoLayoutEl.className = "layout echo-layout display-layout";
+      const zone = document.createElement("div");
+      zone.className = "uz-danger";
+      zone.innerHTML = `<span class="uz-danger-text">Display-Dashboard entfernen</span>`;
+      this._displayDeleteBtn = document.createElement("button");
+      this._displayDeleteBtn.className = "delete";
+      this._displayDeleteBtn.addEventListener("click", () => this._onDisplayDelete(this._page.slice(8)));
+      zone.append(this._displayDeleteBtn);
+      this._displayPageEl.append(this._displayForm, this._echoLayoutEl, zone);
 
       // Module & Pop-ups: Hinzufügen + Liste; ein Klick öffnet die Seite des Moduls
       this._modulesEl = document.createElement("div");
@@ -2754,9 +2870,10 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
         LABELS[s.name] ?? this._hass?.states[s.name]?.attributes?.friendly_name ?? s.name;
       this._form.addEventListener("value-changed", (ev) => this._emit(ev.detail.value));
 
-      this.append(style, this._topEl, this._homeEl, this._layoutEl, this._modulesEl, this._itemPageEl, this._echoLayoutEl, this._form);
+      this.append(style, this._topEl, this._homeEl, this._layoutEl, this._modulesEl, this._itemPageEl, this._displaysEl, this._displayPageEl, this._form);
     }
     this._form.hass = this._hass;
+    this._displayForm.hass = this._hass;
     this._refresh();
   }
 
@@ -2781,9 +2898,16 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
       this._page = "modules";
       return this._showPage();
     }
+    const isDisplay = page.startsWith("display:");
+    const display = isDisplay ? this._displays().find((d) => d.key === page.slice(8)) : undefined;
+    if (isDisplay && !display) {
+      this._page = "displays";
+      return this._showPage();
+    }
     this._homeEl.hidden = page !== "home";
     this._layoutEl.hidden = page !== "layout";
-    this._echoLayoutEl.hidden = page !== "echo";
+    this._displaysEl.hidden = page !== "displays";
+    this._displayPageEl.hidden = !isDisplay;
     this._modulesEl.hidden = page !== "modules";
     this._itemPageEl.hidden = !isItem;
     this._form.hidden = !PAGE_SCHEMAS[page];
@@ -2815,8 +2939,14 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
       this._itemPageEl.replaceChildren();
     }
 
+    const size = display ? displaySize(display) : undefined;
     const meta = isItem
       ? { title: row.name, info: row.type, icon: row.icon, color: EDITOR_PAGES.modules.color }
+      : isDisplay
+        ? {
+            title: display.name || "Display", icon: display.icon || "mdi:monitor-dashboard", color: EDITOR_PAGES.displays.color,
+            info: `${size.name} · ${size.hint} · Adresse …/${display.key}`,
+          }
       : page === "home"
         ? { title: "Einstellungen", info: "Tippe auf einen Bereich, um ihn anzupassen.", icon: withDefaults(this._config).icon || "mdi:home-heart" }
         : EDITOR_PAGES[page];
@@ -2877,16 +3007,11 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
       return ["Seite an", cfg.system_tile ? "Kachel in Unser Zuhause" : "", score && !isNaN(parseFloat(score)) ? `Score ${Math.round(parseFloat(score))}` : ""]
         .filter(Boolean).join(" · ");
     }
-    if (page === "tablet") {
-      const n = (cfg.tablet_users || []).length;
-      return n ? `${n} ${n === 1 ? "Benutzer" : "Benutzer"} · Adresse …/${TABLET_PATH}` : "Aus";
-    }
-    if (page === "echo") {
-      const n = (cfg.echo_users || []).length;
-      if (!n) return "Aus";
-      const { cols } = normalizeEchoLayout(cfg, echoCatalog(cfg).map((t) => t.key));
-      const tiles = cols.flat().length;
-      return `${n} Benutzer · ${tiles} ${tiles === 1 ? "Kachel" : "Kacheln"} · Adresse …/${ECHO_PATH}`;
+    if (page === "displays") {
+      const list = displayList(cfg);
+      if (!list.length) return "Keine";
+      const names = list.map((d) => d.name || d.key);
+      return names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
     }
     if (page === "design") {
       return [cfg.theme || "Standard-Theme", cfg.collapsible ? "Module einklappbar" : ""].filter(Boolean).join(" · ");
@@ -3077,7 +3202,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
 
     const form = document.createElement("ha-form");
     form.computeLabel = (s) => LABELS[s.name] ?? s.name;
-    form.schema = ITEM_SCHEMAS[kind]();
+    form.schema = ITEM_SCHEMAS[kind](this._users || []);
     form.hass = this._hass;
     form.addEventListener("value-changed", (ev) => {
       ev.stopPropagation();
@@ -3228,7 +3353,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
       });
     } else {
       const flat = (list) => list.flatMap((x) => (x.schema && !x.name ? flat(x.schema) : [x]));
-      const fields = flat(ITEM_SCHEMAS[body.kind]()).map((x) => x.name);
+      const fields = flat(ITEM_SCHEMAS[body.kind](this._users || [])).map((x) => x.name);
       this._emit(Object.fromEntries(fields.map((f) => [f, value[f]])));
     }
   }
@@ -3375,26 +3500,103 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
     });
   }
 
-  // Echo Show: 3 Spalten mit Kacheln untereinander; Ziehen oder Antippen (Kachel, dann Ziel)
+  // ---------- Display-Dashboards ----------
+
+  _renderDisplays() {
+    if (!this._displayListEl) return;
+    const list = this._displays();
+    const users = Object.fromEntries((this._users || []).map((u) => [u.id, u.name]));
+    const rows = list.map((d) => {
+      const size = displaySize(d);
+      const who = (d.users || []).map((id) => users[id] || "?");
+      return { key: d.key, name: d.name || d.key, icon: d.icon || "mdi:monitor-dashboard", sub: [size.name, who.length ? who.join(", ") : "kein Benutzer", `…/${d.key}`].join(" · ") };
+    });
+    const signature = JSON.stringify(rows);
+    if (signature === this._displaysSignature) return;
+    this._displaysSignature = signature;
+    this._displayListEl.hidden = !rows.length;
+    this._displayListEl.innerHTML = rows
+      .map((x) => `
+        <button class="uz-row" data-display="${esc(x.key)}" style="--uz-c:${EDITOR_PAGES.displays.color}">
+          <span class="uz-bubble"><ha-icon icon="${esc(x.icon)}"></ha-icon></span>
+          <span class="uz-row-text">
+            <span class="uz-row-title" style="display:block">${esc(x.name)}</span>
+            <span class="uz-row-sub" style="display:block">${esc(x.sub)}</span>
+          </span>
+          <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+        </button>`)
+      .join("");
+  }
+
+  _syncDisplayPage() {
+    const page = this._page || "";
+    if (!this._displayForm || !page.startsWith("display:")) return;
+    const d = this._displays().find((x) => x.key === page.slice(8));
+    if (!d) return;
+    const size = displaySize(d);
+    const custom = size.key === "custom";
+    const schemaKey = JSON.stringify([custom, (this._users || []).map((u) => u.id)]);
+    if (schemaKey !== this._displaySchemaKey) {
+      this._displaySchemaKey = schemaKey;
+      this._displayForm.schema = DISPLAY_SCHEMA(this._users || [], custom);
+    }
+    this._displayForm.data = {
+      name: d.name || "", icon: d.icon || "", size: size.key,
+      ...(custom ? { width: size.width, height: size.height, ...(d.cols ? { cols: size.cols } : {}) } : {}),
+      users: d.users || [], camera: d.camera || "", cameras: d.cameras || [],
+    };
+    const ask = this._pendingDelete === `display:${d.key}`;
+    this._displayDeleteBtn.classList.toggle("confirm", ask);
+    const label = ask ? "Wirklich löschen?" : "Löschen";
+    if (this._displayDeleteBtn.dataset.label !== label) {
+      this._displayDeleteBtn.dataset.label = label;
+      this._displayDeleteBtn.innerHTML = `<ha-icon icon="mdi:delete-outline"></ha-icon><span>${label}</span>`;
+    }
+  }
+
+  // Erster Klick: nachfragen (10 s), zweiter Klick: löschen
+  _onDisplayDelete(key) {
+    const id = `display:${key}`;
+    clearTimeout(this._pendingTimer);
+    if (this._pendingDelete !== id) {
+      this._pendingDelete = id;
+      this._pendingTimer = setTimeout(() => {
+        this._pendingDelete = undefined;
+        this._syncDisplayPage();
+      }, 10000);
+      this._syncDisplayPage();
+      return;
+    }
+    this._pendingDelete = undefined;
+    this._page = "displays";
+    this._saveDisplays(this._displays().filter((d) => d.key !== key));
+  }
+
+  // Kacheln eines Displays: so viele Spalten wie die Auflösung hergibt; Ziehen oder Antippen (Kachel, dann Ziel)
   _renderEchoLayout() {
-    if (!this._echoLayoutEl || !this._hass) return;
+    const page = this._page || "";
+    if (!this._echoLayoutEl || !this._hass || !page.startsWith("display:")) return;
+    const display = this._displays().find((d) => d.key === page.slice(8));
+    if (!display) return;
     const cfg = withDefaults(this._config);
-    const catalog = echoCatalog(cfg);
+    const catalog = displayCatalog(cfg);
+    const size = displaySize(display);
     const byKey = Object.fromEntries(catalog.map((t) => [t.key, t]));
-    const { cols, hidden } = normalizeEchoLayout(cfg, catalog.map((t) => t.key));
+    const { cols, hidden } = normalizeDisplayLayout(display, catalog.map((t) => t.key));
     const chip = (k, from) =>
       `<div class="chip" draggable="true" data-key="${esc(k)}" data-from="${from}"><ha-icon icon="${esc(byKey[k].icon)}"></ha-icon>${esc(byKey[k].name)}</div>`;
-    const signature = JSON.stringify([cols, hidden, catalog]);
+    const signature = JSON.stringify([display.key, size, cols, hidden, catalog]);
     if (signature === this._echoSignature) return;
     this._echoSignature = signature;
     this._echoLayoutEl.innerHTML = `
-      <div class="grid" style="grid-template-columns: repeat(3, minmax(0, 1fr))">
+      <div class="uz-sub-label">Kacheln (${cols.length} Spalten)</div>
+      <div class="grid" style="grid-template-columns: repeat(${cols.length}, minmax(0, 1fr))">
         ${cols.map((col, c) => `<div class="cell col" data-col="${c}">${col.map((k) => chip(k, c)).join("") || '<span class="empty">leer</span>'}</div>`).join("")}
       </div>
       <div class="pool" data-col="pool"><span class="pool-title">Ausgeblendet</span>${hidden.map((k) => chip(k, "pool")).join("")}</div>
       <div class="hint">Kacheln stehen in ihrer Spalte untereinander. Ziehen oder antippen und dann das Ziel antippen:
         auf eine Kachel = davor einfügen, auf freie Fläche = ans Ende. Kacheln ohne Daten (z. B. Kamera ohne Auswahl) bleiben leer.
-        Der Echo Show 8 zeigt ohne Scrollen etwa 750 Pixel Höhe.</div>`;
+        Bei ${esc(size.name)} sind ohne Scrollen etwa ${Math.max(0, size.height - 50)} Pixel Höhe sichtbar.</div>`;
 
     // key in Spalte target (Zahl oder "pool") vor before einfügen (ohne before = ans Ende)
     const move = (key, target, before) => {
@@ -3405,7 +3607,7 @@ class UnserZuhauseStrategyEditor extends HTMLElement {
         col.splice(at >= 0 ? at : col.length, 0, key);
       }
       this._echoPick = undefined;
-      this._emit({ echo_layout: next });
+      this._updateDisplay(display.key, { layout: next });
     };
     const setPick = (pick) => {
       this._echoPick = pick;

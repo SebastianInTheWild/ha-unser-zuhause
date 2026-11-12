@@ -18,11 +18,13 @@ Eine Dashboard-Strategy, die aus Bereichen, Etagen und dem Energie-Dashboard aut
   - Quellen aus dem Standard-Energie-Dashboard
   - Netz links, PV oben, Batterie unten, Haus mit Anteils-Ring, Wasser oben, Verbraucher rechts
   - Linien animiert nur, wenn gerade Leistung fließt
-- **Echo-Show-Ansicht** für den Echo Show 8 (1280 × 800): alles auf einen Blick ohne Scrollen
-  - Kacheln in 3 Spalten per Drag & Drop oder Antippen anordnen und ausblenden: Uhr, Begrüßung, Hausmodus, Szenen, Status, Energie aktuell/heute, „Läuft gerade“, „Was ist los?“, Räume, Kamera, Wetter, Personen, Favoriten, Müll, eigene Module
-  - Kamera als Standbild (springt bei Bewegung auf die aktive Kamera)
-  - Antippen der Energiekarte öffnet die Energie-Seite
-  - Startseite für die gewählten Benutzer (Einstellungen → „Echo Show“), sonst Unterseite `…/echo-show`
+- **Display-Dashboards** für Echo Show, Tablets und Wandbildschirme: alles auf einen Blick ohne Scrollen
+  - beliebig viele unter Einstellungen → „Display-Dashboards“ anlegen
+  - Auflösung aus Vorlagen (960 × 480 Echo Show 5, 1024 × 600, 1024 × 768 iPad, 1280 × 800 Echo Show 8/10, 1920 × 1080 Echo Show 15/21, 1920 × 1200, 800 × 1280 hochkant) oder „Eigene Maße“ (Breite, Höhe, Spalten 1–4); daraus ergibt sich die Spaltenzahl
+  - Kacheln je Spalte per Drag & Drop oder Antippen anordnen und ausblenden: Uhr, Begrüßung, Hausmodus, Szenen, Status, Energie aktuell/heute, „Läuft gerade“, „Was ist los?“, Räume, Kamera (Standbild), Kameras (live), Wetter, Personen, Favoriten, Müll, eigene Module
+  - Startseite für die gewählten Benutzer (z. B. das Konto des Geräts), für alle anderen Unterseite `…/<adresse>`
+  - frühere Einstellungen „Tablet“ und „Echo Show“ werden automatisch übernommen
+- **Begrüßung ohne Namen** für gewählte Benutzer (Module & Pop-ups → Unser Zuhause), z. B. für ein Display-Konto, das mehrere Personen nutzen
 - **Label `no_dboard`** an Entität oder Gerät blendet sie überall aus
 
 ## Voraussetzungen

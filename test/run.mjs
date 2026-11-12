@@ -691,8 +691,8 @@ console.log("\n— Kameras");
     lTiles.find((t) => t.title === "Strategie")?.path === "/dashboard-strategie" && lTiles.find((t) => t.title === "Extern ohne Unterseite")?.path === "/dashboard-heizung");
   check("Energie-Seite abschaltbar", !(await Strategy.generate({ ...userConfig, show_energy_page: false }, hass)).views.some((v) => v.path === "energie"));
 
-  // ---------- 2f. Tablet ----------
-  console.log("\n— Tablet");
+  // ---------- 2f. Display-Dashboards (frühere Tablet-Einstellungen) ----------
+  console.log("\n— Display: übernommenes Tablet");
   const tabCfg = { ...userConfig, tablet_users: ["u-tab"] };
   const asTablet = (await Strategy.generate(tabCfg, { ...camHass, user: { id: "u-tab" } })).views;
   check("Tablet-Benutzer: Tablet ist die erste Seite", asTablet[0]?.path === "tablet" && !asTablet[0].subview && asTablet[1]?.path === "zuhause");
@@ -704,8 +704,8 @@ console.log("\n— Kameras");
   check("Andere Benutzer: Startseite bleibt, Tablet als Unterseite", asOther[0].path === "zuhause" && asOther.find((v) => v.path === "tablet")?.subview === true);
   check("Ohne Tablet-Benutzer keine Tablet-Seite", !(await Strategy.generate(userConfig, camHass)).views.some((v) => v.path === "tablet"));
 
-  // ---------- 2f2. Echo Show ----------
-  console.log("\n— Echo Show");
+  // ---------- 2f2. Display: übernommener Echo Show ----------
+  console.log("\n— Display: übernommener Echo Show");
   const echoCfg = { ...userConfig, echo_users: ["u-echo"], echo_camera: "camera.garten" };
   const asEcho = (await Strategy.generate(echoCfg, { ...camHass, user: { id: "u-echo" } })).views;
   check("Echo-Benutzer: Echo Show ist die erste Seite", asEcho[0]?.path === "echo-show" && !asEcho[0].subview && asEcho[1]?.path === "zuhause");
@@ -735,6 +735,49 @@ console.log("\n— Kameras");
   check("Echo Show: nicht platzierte Kacheln ausgeblendet, Pop-ups bleiben",
     !ownCards.some((c) => c.card_type === "button" || c.type === "custom:uz-greeting-card") && ownCards.some((c) => c.card_type === "pop-up"));
   check("Ohne Echo-Benutzer keine Echo-Seite", !(await Strategy.generate(userConfig, camHass)).views.some((v) => v.path === "echo-show"));
+  check("Gespeicherte Display-Liste hat Vorrang vor alten Einstellungen",
+    !(await Strategy.generate({ ...echoCfg, displays: [] }, { ...camHass, user: { id: "u-echo" } })).views.some((v) => v.path === "echo-show"));
+
+  // ---------- 2f3. Eigene Display-Dashboards ----------
+  console.log("\n— Display-Dashboards");
+  const dispCfg = {
+    ...userConfig,
+    greeting_hide_name_users: ["u-flur"],
+    displays: [
+      { key: "display-flur", name: "Flur", icon: "mdi:tablet", size: "960x480", users: ["u-flur"], layout: [["clock", "greeting"], ["weather"], ["rooms"]] },
+      { key: "display-kueche", name: "Küche", size: "1920x1080", users: ["u-kueche", "u-flur"], cameras: ["camera.garten"], layout: [["clock"], ["weather"], ["rooms"], ["cameras"]] },
+    ],
+  };
+  const asFlur = (await Strategy.generate(dispCfg, { ...camHass, user: { id: "u-flur" } })).views;
+  check("Display-Benutzer: sein Display ist die erste Seite (bei mehreren das erste)",
+    asFlur[0]?.path === "display-flur" && !asFlur[0].subview && asFlur[0].title === "Flur" && asFlur[1]?.path === "zuhause" &&
+    asFlur.find((v) => v.path === "display-kueche")?.subview === true);
+  check("960 × 480: 2 Spalten, Rest der 3. Spalte rutscht in die letzte",
+    asFlur[0].max_columns === 2 && asFlur[0].sections.length === 2 &&
+    JSON.stringify(asFlur[0].sections[1]).includes("weather-forecast") && JSON.stringify(asFlur[0].sections[1]).includes('"card_type":"button"'));
+  const flurGreet = flatCards(asFlur[0].sections.flatMap((x) => x.cards)).find((c) => c.type === "custom:uz-greeting-card");
+  check("Begrüßung auf dem Display bekommt hide_name_users", flurGreet?.hide_name_users?.join() === "u-flur");
+  const mainGreet = flatCards(asFlur.find((v) => v.path === "zuhause").sections.flatMap((x) => x.cards)).find((c) => c.type === "custom:uz-greeting-card");
+  check("Begrüßung auf der Startseite bekommt hide_name_users", mainGreet?.hide_name_users?.join() === "u-flur");
+  const asKueche = (await Strategy.generate(dispCfg, { ...camHass, user: { id: "u-kueche" } })).views;
+  check("1920 × 1080: 4 Spalten, Kameras live mit gewählter Kamera",
+    asKueche[0]?.path === "display-kueche" && asKueche[0].max_columns === 4 && asKueche[0].sections.length === 4 &&
+    flatCards(asKueche[0].sections[3].cards).some((c) => c.type === "custom:uz-camera-grid-card" && c.cameras.join() === "camera.garten"));
+  const asNobody = (await Strategy.generate(dispCfg, { ...camHass, user: { id: "u-seb" } })).views;
+  check("Andere Benutzer: Startseite zuerst, beide Displays als Unterseiten",
+    asNobody[0].path === "zuhause" && ["display-flur", "display-kueche"].every((p) => asNobody.find((v) => v.path === p)?.subview === true));
+  const defaults = (await Strategy.generate({ ...userConfig, displays: [{ key: "display-neu", name: "Neu", size: "1280x800", users: ["u-x"] }] }, { ...camHass, user: { id: "u-x" } })).views[0];
+  const custom = (d) => Strategy.generate({ ...userConfig, displays: [{ key: "display-c", name: "C", users: ["u-x"], ...d }] }, { ...camHass, user: { id: "u-x" } }).then((x) => x.views[0]);
+  check("Eigene Maße: Spalten aus der Breite (2560 → 4, 600 → 2, 400 → 1)",
+    (await custom({ size: "custom", width: 2560, height: 1440 })).max_columns === 4 &&
+    (await custom({ size: "custom", width: 600, height: 1024 })).max_columns === 2 &&
+    (await custom({ size: "custom", width: 400, height: 700 })).sections.length === 1);
+  check("Eigene Maße: gewählte Spaltenzahl gilt, Unsinn wird begrenzt",
+    (await custom({ size: "custom", width: 2560, height: 1440, cols: 2 })).max_columns === 2 &&
+    (await custom({ size: "custom", width: 2560, height: 1440, cols: 9 })).max_columns === 4 &&
+    (await custom({ size: "custom", width: "abc" })).max_columns === 3);
+  check("Neues Display ohne Anordnung: Standard-Kacheln in 3 Spalten",
+    defaults.path === "display-neu" && defaults.max_columns === 3 && JSON.stringify(defaults.sections[0]).includes('"type":"clock"'));
 }
 
 // ---------- 2g. Startseite: Begrüßung, Hinweise, Läuft gerade, Szenen, Personen, Vorschau ----------
@@ -766,6 +809,14 @@ console.log("\n— Startseite-Karten");
   });
   const gt = gr.shadowRoot.textContent;
   check("Begrüßung mit Vornamen und Datum", /(Guten (Morgen|Tag|Abend)|Gute Nacht), Sebastian/.test(gt) && /\d+\. \w+/.test(gt), gt.slice(0, 80));
+  const grNo = document.createElement("uz-greeting-card");
+  document.body.append(grNo);
+  grNo.setConfig({ hide_name_users: ["u-disp"] });
+  grNo.hass = H({}, { user: { id: "u-disp", name: "Display Flur" } });
+  const gtNo = grNo.shadowRoot.textContent;
+  check("Begrüßung ohne Namen für hide_name_users", /(Guten (Morgen|Tag|Abend)|Gute Nacht)/.test(gtNo) && !gtNo.includes("Display"), gtNo.slice(0, 60));
+  grNo.hass = H({}, { user: { id: "u-andere", name: "Christina X" } });
+  check("… andere Benutzer weiter mit Namen", grNo.shadowRoot.textContent.includes(", Christina"));
   check("Chips: Temperatur, Lichter, Fenster offen", gt.includes("12,5 °C") && gt.includes("2 Lichter an") && gt.includes("Fenster offen"));
   check("Regen: grauer Hintergrund mit Regen-Effekt", gr.shadowRoot.querySelector(".fx.rain") && gr.shadowRoot.innerHTML.includes("#334155"));
   gr.hass = H({ "weather.home": st("weather.home", "clear-night", { temperature: 5 }), "sun.sun": st("sun.sun", "below_horizon", { elevation: -20 }) });
@@ -1113,7 +1164,7 @@ const itemPage = () => visible(".uz-item-page");
 const title = () => visible(".uz-top-title")?.textContent;
 
 check("Startseite: Bereiche in zwei Gruppen",
-  [...editor.querySelectorAll(".uz-home [data-page]")].map((b) => b.dataset.page).join() === "layout,modules,cameras,batteries,system,tablet,echo,header,rooms,design" &&
+  [...editor.querySelectorAll(".uz-home [data-page]")].map((b) => b.dataset.page).join() === "layout,modules,cameras,batteries,system,displays,header,rooms,design" &&
   [...editor.querySelectorAll(".uz-group-label")].map((l) => l.textContent).join() === "Aufbau,Darstellung");
 check("Startseite: Kurzinfo je Bereich", editor.querySelector('.uz-home [data-page="layout"] .uz-row-sub')?.textContent.includes("Spalten"));
 check("Startseite ohne Zurück-Pfeil, nur sie sichtbar", !visible(".uz-back") && editor.querySelector(".layout").hidden);
@@ -1333,24 +1384,75 @@ editor.querySelector(`.chip[data-key="${fromKey}"]`).click();
 editor.querySelector('[data-cell="0,0"]').click();
 check("… und wieder einblenden", changes.at(-1)?.grid?.[0]?.[0] === fromKey && !changes.at(-1)?.hidden_modules?.includes(fromKey));
 
-// Echo Show: Kacheln in 3 Spalten anordnen
-go("echo");
+// Display-Dashboards: anlegen, einstellen, Kacheln anordnen, löschen
+go("displays");
+check("Display-Dashboards: Seite mit „+ Display-Dashboard“, noch keine Displays",
+  !editor.querySelector(".uz-displays").hidden && !!editor.querySelector(".add-display") && !editor.querySelectorAll(".display-list [data-display]").length);
+editor.querySelector(".add-display").click();
+await settle();
+const dispNow = () => changes.at(-1)?.displays?.[0];
+check("„+ Display-Dashboard“ legt ein Display an und öffnet seine Seite",
+  changes.at(-1)?.displays?.length === 1 && /^display-/.test(dispNow().key) && dispNow().size === "1280x800" &&
+  title() === "Neues Display" && !editor.querySelector(".uz-display-page").hidden);
+check("Frühere Tablet-/Echo-Einstellungen werden dabei entfernt", "echo_users" in changes.at(-1) && changes.at(-1).echo_users === undefined);
+const dForm = () => editor.querySelector(".uz-display-page > ha-form");
+check("Display-Formular: Name, Icon, Auflösung (mit Geräten), Benutzer, Kameras",
+  ["name", "icon", "size", "users", "camera", "cameras"].every((n) => JSON.stringify(dForm().schema).includes(`"name":"${n}"`)) &&
+  JSON.stringify(dForm().schema).includes("Echo Show 5") && JSON.stringify(dForm().schema).includes("Sebastian"));
 const echoEl = () => editor.querySelector(".echo-layout");
 const echoCol = (c) => [...echoEl().querySelectorAll(`[data-col="${c}"] .chip`)].map((x) => x.dataset.key);
-check("Echo Show: Layout-Editor mit 3 Spalten und Standard-Kacheln",
-  !echoEl().hidden && echoEl().querySelectorAll(".cell.col").length === 3 && echoCol(0)[0] === "clock" && echoCol(1)[0] === "energy_now" &&
-  echoCol("pool").includes("weather"));
+check("Kachel-Editor mit 3 Spalten und Standard-Kacheln",
+  echoEl().querySelectorAll(".cell.col").length === 3 && echoCol(0)[0] === "clock" && echoCol(1)[0] === "energy_now" &&
+  echoCol("pool").includes("weather") && echoCol("pool").includes("cameras"));
 echoEl().querySelector('.chip[data-key="weather"]').click();
 echoEl().querySelector('.chip[data-key="running"]').click();
-check("Echo Show: Antippen fügt vor der Ziel-Kachel ein", changes.at(-1)?.echo_layout?.[1]?.join() === "energy_now,weather,running,alerts", JSON.stringify(changes.at(-1)?.echo_layout));
+check("Antippen fügt vor der Ziel-Kachel ein", dispNow()?.layout?.[1]?.join() === "energy_now,weather,running,alerts", JSON.stringify(dispNow()?.layout));
 echoEl().querySelector('.chip[data-key="clock"]').click();
 echoEl().querySelector('[data-col="2"]').click();
-check("Echo Show: Antippen der Spalte hängt ans Ende", changes.at(-1)?.echo_layout?.[2]?.at(-1) === "clock" && !changes.at(-1).echo_layout[0].includes("clock"));
+check("Antippen der Spalte hängt ans Ende", dispNow()?.layout?.[2]?.at(-1) === "clock" && !dispNow().layout[0].includes("clock"));
 const echoDrop = new win.Event("drop", { bubbles: true });
 echoDrop.dataTransfer = { getData: () => "alerts" };
 echoEl().querySelector('[data-col="pool"]').dispatchEvent(echoDrop);
-check("Echo Show: Ziehen nach „Ausgeblendet“ blendet aus", !changes.at(-1)?.echo_layout?.flat().includes("alerts") && echoCol("pool").includes("alerts"));
+check("Ziehen nach „Ausgeblendet“ blendet aus", !dispNow()?.layout?.flat().includes("alerts") && echoCol("pool").includes("alerts"));
 check("Haupt-Layout bleibt verborgen", editor.querySelector(".layout:not(.echo-layout)").hidden);
+dForm().dispatchEvent(new win.CustomEvent("value-changed", { detail: { value: { ...dForm().data, name: "Flur", size: "960x480", users: ["u-chr"] } } }));
+await settle();
+check("Formular speichert Name, Auflösung und Benutzer", dispNow().name === "Flur" && dispNow().size === "960x480" && dispNow().users.join() === "u-chr");
+check("Kleinere Auflösung: Kachel-Editor zeigt 2 Spalten, Kopf zeigt Auflösung",
+  echoEl().querySelectorAll(".cell.col").length === 2 && title() === "Flur" && visible(".uz-top-info")?.textContent.includes("960 × 480"));
+dForm().dispatchEvent(new win.CustomEvent("value-changed", { detail: { value: { ...dForm().data, size: "custom" } } }));
+await settle();
+check("Eigene Maße: übernimmt die bisherigen Maße, Felder Breite/Höhe/Spalten erscheinen",
+  dispNow().size === "custom" && dispNow().width === 960 && dispNow().height === 480 &&
+  ["width", "height", "cols"].every((n) => JSON.stringify(dForm().schema).includes(`"name":"${n}"`)) && dForm().data.width === 960);
+dForm().dispatchEvent(new win.CustomEvent("value-changed", { detail: { value: { ...dForm().data, width: 2560, height: 1440 } } }));
+await settle();
+check("Eigene Maße: Breite 2560 → 4 Spalten, Kopf zeigt die Maße",
+  echoEl().querySelectorAll(".cell.col").length === 4 && visible(".uz-top-info")?.textContent.includes("2560 × 1440"));
+dForm().dispatchEvent(new win.CustomEvent("value-changed", { detail: { value: { ...dForm().data, cols: 1 } } }));
+await settle();
+check("Eigene Maße: Spaltenzahl wählbar", echoEl().querySelectorAll(".cell.col").length === 1 && dispNow().cols === 1);
+dForm().dispatchEvent(new win.CustomEvent("value-changed", { detail: { value: { ...dForm().data, size: "960x480" } } }));
+await settle();
+check("Zurück zu fester Auflösung: eigene Maße weg, Felder weg",
+  dispNow().width === undefined && dispNow().cols === undefined && !JSON.stringify(dForm().schema).includes('"name":"width"') &&
+  echoEl().querySelectorAll(".cell.col").length === 2);
+visible(".uz-back").click();
+check("Zurück führt zur Liste mit dem Display", !editor.querySelector(".uz-displays").hidden &&
+  editor.querySelector(".display-list [data-display]")?.textContent.includes("Christina"));
+editor.querySelector(".display-list [data-display]").click();
+const dDel = () => editor.querySelector(".uz-display-page .delete");
+dDel().click();
+check("Löschen fragt erst nach", changes.at(-1).displays.length === 1 && dDel().textContent.includes("Wirklich löschen?"));
+dDel().click();
+check("Display gelöscht, zurück zur Liste", changes.at(-1).displays.length === 0 && !editor.querySelector(".uz-displays").hidden);
+editor.setConfig(withCustom);
+
+// Begrüßung: Name je Benutzer ausblenden (Feld im Modul „Unser Zuhause“)
+openItem("home:home");
+await settle();
+check("Unser Zuhause: Begrüßung ohne Namen je Benutzer wählbar",
+  JSON.stringify(itemPage().querySelector(".item-body > ha-form")?.schema).includes("greeting_hide_name_users"));
 
 go("modules");
 editor.querySelector(".add-module").click();
