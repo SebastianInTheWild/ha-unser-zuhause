@@ -21,6 +21,7 @@ const DEFAULTS = {
   badges: [],
   badge_actions: {},
   badge_names: {}, // eigene Namen je Badge, z. B. { "sensor.aussen_temperatur": "Draußen" } (leer = Name der Entität)
+  badge_hide_state: {}, // zweite Zeile (Zustand) je Badge ausblenden, z. B. { "button.wol_nuc": true }
   lights_entity: "",
   covers_entity: "",
   windows_entity: "",
@@ -1506,7 +1507,7 @@ class UnserZuhauseStrategy extends HTMLElement {
             layout: "center",
             badges_position: "top",
             ...(cfg.badges.length
-              ? { card: { type: "custom:uz-badge-row", entities: cfg.badges, actions: cfg.badge_actions || {}, names: cfg.badge_names || {} } }
+              ? { card: { type: "custom:uz-badge-row", entities: cfg.badges, actions: cfg.badge_actions || {}, names: cfg.badge_names || {}, hide_state: cfg.badge_hide_state || {} } }
               : {}),
           },
           sections,
@@ -2039,6 +2040,18 @@ const badgeNameSchema = (badges) =>
       }]
     : [];
 
+// Je Badge in Reihe 2 die zweite Zeile (Zustand) ausblenden (Daten unter badge_hide_state.<entity_id>)
+const badgeHideStateSchema = (badges) =>
+  badges.length
+    ? [{
+        type: "expandable",
+        name: "badge_hide_state",
+        title: "Header Reihe 2: zweite Zeile ausblenden",
+        icon: "mdi:eye-off-outline",
+        schema: badges.map((entity) => ({ name: entity, selector: { boolean: {} } })),
+      }]
+    : [];
+
 // Seiten des Einstellungsmenüs: Startseite mit Bereichen, jeder Bereich eine eigene Seite
 const EDITOR_PAGES = {
   layout: {
@@ -2171,6 +2184,7 @@ const PAGE_SCHEMAS = {
     { name: "persons_only_home", selector: { boolean: {} } },
     { name: "badges", selector: { entity: { multiple: true, reorder: true } } },
     ...badgeNameSchema(badges),
+    ...badgeHideStateSchema(badges),
     ...badgeActionSchema(badges),
   ],
   rooms: () => [

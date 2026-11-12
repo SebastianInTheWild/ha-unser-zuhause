@@ -851,7 +851,7 @@ console.log("\n— Startseite-Karten");
   al.hass = battHass;
   check("„Was ist los?“ nennt Batterietyp, ohne Handy", al.shadowRoot.textContent.includes("Taster Flur 3 % (1× CR2032)") && !al.shadowRoot.textContent.includes("iPhone"));
 
-  const gen = await Strategy.generate({ ...userConfig, badges: ["sensor.daily_pv_generation"], badge_names: { "sensor.daily_pv_generation": "PV heute" } }, battHass);
+  const gen = await Strategy.generate({ ...userConfig, badges: ["sensor.daily_pv_generation"], badge_names: { "sensor.daily_pv_generation": "PV heute" }, badge_hide_state: { "sensor.daily_pv_generation": true } }, battHass);
   const bView = gen.views.find((v) => v.path === "batterien");
   check("Strategy: Unterseite „Batterien“ mit Karte und Kachel",
     bView?.subview && bView.sections[0].cards[0].type === "custom:uz-battery-card" &&
@@ -864,7 +864,12 @@ console.log("\n— Startseite-Karten");
   document.body.append(br);
   br.setConfig(rowCfg);
   br.hass = battHass;
-  check("Badge zeigt eigenen Namen statt Entitätsname", br.shadowRoot.querySelector(".name")?.textContent === "PV heute");
+  check("Header Reihe 2 bekommt hide_state", rowCfg?.hide_state?.["sensor.daily_pv_generation"] === true);
+  check("Badge ohne zweite Zeile zeigt nur den eigenen Namen",
+    br.shadowRoot.querySelectorAll(".txt span").length === 1 && br.shadowRoot.querySelector(".txt .state")?.textContent === "PV heute");
+  br.setConfig({ ...rowCfg, hide_state: {} });
+  br.hass = battHass;
+  check("Badge zeigt eigenen Namen statt Entitätsname", br.shadowRoot.querySelector(".name")?.textContent === "PV heute" && br.shadowRoot.querySelectorAll(".txt span").length === 2);
 
   // Läuft gerade
   const rn = document.createElement("uz-running-card");
@@ -1104,6 +1109,7 @@ const form = () => editor.querySelector("ha-form.uz-form");
 const headerSchema = JSON.stringify(form().schema);
 check("Kopfzeile: Personen, Badges und Aktionen je Badge", ["persons", "badges", "badge_actions", "ui_action"].every((n) => headerSchema.includes(n)));
 check("Kopfzeile: eigener Name je Badge", headerSchema.includes("badge_names") && headerSchema.includes("Header Reihe 2: eigene Namen"));
+check("Kopfzeile: zweite Zeile je Badge ausblendbar", headerSchema.includes("badge_hide_state") && headerSchema.includes("Header Reihe 2: zweite Zeile ausblenden"));
 go("batteries");
 check("Batterien: eigene Einstellungsseite", ["show_batteries", "battery_tile", "alert_battery", "battery_soon"].every((n) => JSON.stringify(form().schema).includes(n)));
 go("header");
