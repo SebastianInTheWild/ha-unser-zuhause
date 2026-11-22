@@ -381,6 +381,19 @@ win.history.pushState = (a, b, path) => pushed.push(path);
 sysCard.shadowRoot.getElementById("go").click();
 win.history.pushState = realPush;
 check("Klick öffnet die System-Seite", pushed.at(-1)?.endsWith("/system"), pushed.at(-1));
+// In HA: Navigation über HAs navigate-Aktion (damit der Zurück-Pfeil auf die vorige Seite führt)
+const haRoot = document.createElement("home-assistant");
+document.body.append(haRoot);
+const navActions = [];
+haRoot.addEventListener("hass-action", (e) => navActions.push(e.detail));
+const pushedBefore = pushed.length;
+win.history.pushState = (a, b, path) => pushed.push(path);
+sysCard.shadowRoot.getElementById("go").click();
+win.history.pushState = realPush;
+haRoot.remove();
+const nav = navActions.at(-1)?.config?.tap_action;
+check("In HA navigiert die Karte über HAs navigate-Aktion statt selbst",
+  nav?.action === "navigate" && nav.navigation_path.endsWith("/system") && pushed.length === pushedBefore, JSON.stringify(navActions));
 const fullCard = document.createElement("uz-system-status-card");
 document.body.append(fullCard);
 fullCard.setConfig({ ...homeSys, mode: "full" });
